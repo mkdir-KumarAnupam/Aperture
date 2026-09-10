@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Post {
+  id              String   @id
+  platform        String   // "x" | "reddit"
+  postId          String   @unique
+  authorId        String
+  text            String
+  timestamp       DateTime
+  language        String?
+  detectedLang    String?  // language detected via langdetect
+  engagement      String   // Stored as JSON string (likes, retweets/upvotes, replies)
+  replyToId       String?
+  replyToAuthorId String?  // author of the tweet being replied to (for network edges)
+  forwardFromId   String?  // retweet-of / quote-of on X; not used on Reddit
+  hashtags        String   // Stored as JSON string array — ALL hashtags parsed from text
+  sourceLayer     String   // "trend_seed" | "keyword_search" | "author_lookup"
+  authorHandle    String?  // Name or handle of the author
+  trendLabel      String?  // Which trend keyword this post was found under
+  createdAt       DateTime @default(now())
+}
+
+model Author {
+  id            String   @id
+  platform      String
+  authorId      String   @unique
+  handle        String?
+  bio           String?
+  location      String?
+  region        String?  // parsed from location (e.g. "India", "US")
+  profession    String?  // inferred from bio keywords
+  followerCount Int?
+  verified      Boolean?
+  accountAge    DateTime?
+  lastFetched   DateTime @default(now())
+}
+
+model Trend {
+  id              String   @id @default(cuid())
+  platform        String
+  label           String
+  volume          Int?
+  rank            Int?
+  tweetCount      Int?     // actual number of tweets found for this trend
+  category        String?  // Politics | Entertainment | Sports | Tech | Other
+  totalEngagement Int?     // sum of all engagement across tweets for this trend
+  batchId         String   // groups all trends from one scrape run
+  fetchedAt       DateTime @default(now())
+
+  @@index([label, fetchedAt])
+}
+
+model Edge {
+  id           String   @id @default(cuid())
+  sourceAuthor String   // who replied/retweeted
+  targetAuthor String   // who they replied to/retweeted
+  platform     String
+  edgeType     String   // "reply" | "retweet" | "quote"
+  trendLabel   String?  // which trend context
+  weight       Int      @default(1) // number of interactions
+  batchId      String
+  createdAt    DateTime @default(now())
+
+  @@index([sourceAuthor, targetAuthor])
+  @@index([trendLabel])
+}
+
+model HashtagPair {
+  id        String   @id @default(cuid())
+  tagA      String
+  tagB      String
+  count     Int      @default(1)
+  batchId   String
+  createdAt DateTime @default(now())
+
+  @@unique([tagA, tagB, batchId])
+}
