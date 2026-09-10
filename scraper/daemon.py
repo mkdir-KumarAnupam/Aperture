@@ -16,22 +16,29 @@ def run_daemon():
     while True:
         try:
             logging.info("Fetching top 10 trends from X...")
-            res = requests.get(f"{SCRAPER_API_URL}/scrape/x/trends", timeout=30)
-            res.raise_for_status()
-            data = res.json().get('data', [])
+            res_x = requests.get(f"{SCRAPER_API_URL}/scrape/x/trends", timeout=30)
+            res_x.raise_for_status()
+            data_x = res_x.json().get('data', [])
             
-            if not data:
-                logging.warning("No trends returned. Retrying in 60s.")
+            logging.info("Fetching top 5 trends from Reddit...")
+            res_reddit = requests.get(f"{SCRAPER_API_URL}/scrape/reddit/trends", timeout=120)
+            data_reddit = []
+            if res_reddit.status_code == 200:
+                data_reddit = res_reddit.json().get('data', [])
+            
+            combined_data = data_x[:10] + data_reddit[:5]
+
+            if not combined_data:
+                logging.warning("No trends returned from X or Reddit. Retrying in 60s.")
                 time.sleep(SLEEP_INTERVAL)
                 continue
 
-            top_10 = data[:10]
-            labels = [t['label'] for t in top_10]
+            labels = list(dict.fromkeys([t['label'] for t in combined_data])) # Remove duplicates
             
             target_label = labels[index % len(labels)]
-            logging.info(f"Targeting Trend [{index % len(labels)}/10]: {target_label}")
+            logging.info(f"Targeting Trend [{index % len(labels)}/{len(labels)}]: {target_label}")
 
-            ingest_payload = {"targetTrendLabel": target_label}
+            ingest_payload = {"targetTrendLabel": target_label, "trendsData": combined_data}
             ingest_res = requests.post(NEXT_API_URL, json=ingest_payload, timeout=300) # Deep scrape can take time
             
             if ingest_res.status_code == 200:

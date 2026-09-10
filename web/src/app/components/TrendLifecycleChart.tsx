@@ -29,13 +29,14 @@ interface LifecycleData {
   totalSnapshots: number;
 }
 
-export default function TrendLifecycleChart() {
+export default function TrendLifecycleChart({ q }: { q?: string }) {
   const [data, setData] = useState<LifecycleData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedTrend, setSelectedTrend] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/trends/lifecycle')
+    const url = q ? `/api/trends/lifecycle?q=${encodeURIComponent(q)}` : '/api/trends/lifecycle';
+    fetch(url)
       .then(res => res.json())
       .then(json => {
         if (json.error) {
@@ -147,18 +148,22 @@ export default function TrendLifecycleChart() {
       y: {
         min: 0,
         max: 100,
-        title: { display: true, text: 'Trend Score' },
+        title: { display: true, text: 'Trend Score', color: '#000', font: { family: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' } },
+        ticks: { color: '#000' },
+        grid: { color: '#eee' }
       },
       x: {
-        title: { display: true, text: 'Scrape Time' },
+        title: { display: true, text: 'Scrape Time', color: '#000', font: { family: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' } },
+        ticks: { color: '#000' },
+        grid: { color: '#eee' }
       }
     }
   };
 
   return (
-    <div style={{ marginBottom: '40px' }}>
+    <div style={{ marginBottom: '10px' }}>
       {/* Trend Tabs */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0', borderBottom: '2px solid #000', marginBottom: '0' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
         {data.labels.map((label, i) => {
           const isActive = selectedTrend === label;
           return (
@@ -166,15 +171,14 @@ export default function TrendLifecycleChart() {
               key={label}
               onClick={() => setSelectedTrend(label)}
               style={{
-                padding: '8px 14px',
+                padding: '6px 12px',
                 cursor: 'pointer',
-                border: '2px solid #000',
-                borderBottom: isActive ? '2px solid #fff' : '2px solid #000',
-                marginBottom: '-2px',
-                backgroundColor: isActive ? '#fff' : '#eee',
+                border: isActive ? `2px solid ${COLORS[i % COLORS.length]}` : '1px solid #ccc',
+                backgroundColor: isActive ? '#fff' : '#f0f0f0',
                 fontWeight: isActive ? 'bold' : 'normal',
-                fontSize: '12px',
-                color: isActive ? COLORS[i % COLORS.length] : '#333',
+                fontSize: '13px',
+                color: '#000',
+                fontFamily: 'monospace'
               }}
             >
               {label.length > 20 ? label.substring(0, 20) + '..' : label}
@@ -185,52 +189,45 @@ export default function TrendLifecycleChart() {
 
       {/* Chart + Info panel */}
       {selectedTrend && seriesData && chartData && (
-        <div style={{ border: '2px solid #000', borderTop: 'none', padding: '15px' }}>
-          <div style={{ display: 'flex', gap: '20px' }}>
-            {/* Chart */}
-            <div style={{ flex: 1, height: '300px' }}>
-              <Line data={chartData} options={options} />
+        <div style={{ display: 'flex', gap: '20px', flexDirection: 'column' }}>
+          {/* Chart */}
+          <div style={{ height: '300px', width: '100%' }}>
+            <Line data={chartData} options={options} />
+          </div>
+
+          {/* Info row */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', fontSize: '14px', borderTop: '2px solid #000', paddingTop: '15px', fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+            <div>
+              <div style={{ color: '#000', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>Target Entity</div>
+              <div style={{ fontWeight: 'bold', color: color, fontSize: '16px' }}>{selectedTrend}</div>
             </div>
 
-            {/* Info sidebar */}
-            <div style={{ width: '200px', fontSize: '13px' }}>
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>TREND</div>
-                <div style={{ fontWeight: 'bold', color: color }}>{selectedTrend}</div>
+            <div>
+              <div style={{ color: '#000', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>Current Phase</div>
+              <div style={{ fontWeight: 'bold', color: phaseColor(data.phases[selectedTrend]), fontSize: '16px' }}>
+                {phaseLabel(data.phases[selectedTrend])}
               </div>
+            </div>
 
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>PHASE</div>
-                <div style={{ fontWeight: 'bold', color: phaseColor(data.phases[selectedTrend]) }}>
-                  {phaseLabel(data.phases[selectedTrend])}
-                </div>
+            <div>
+              <div style={{ color: '#000', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>Latest Recorded Rank</div>
+              <div style={{ fontWeight: 'bold', color: '#000', fontFamily: 'monospace', fontSize: '16px' }}>
+                {seriesData[seriesData.length - 1]?.rank 
+                  ? `#${seriesData[seriesData.length - 1].rank}` 
+                  : 'Absent'}
               </div>
+            </div>
 
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>LATEST RANK</div>
-                <div style={{ fontWeight: 'bold' }}>
-                  {seriesData[seriesData.length - 1]?.rank 
-                    ? `#${seriesData[seriesData.length - 1].rank}` 
-                    : 'Absent'}
-                </div>
+            <div>
+              <div style={{ color: '#000', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>Computed Score</div>
+              <div style={{ fontWeight: 'bold', color: '#000', fontFamily: 'monospace', fontSize: '16px' }}>
+                {seriesData[seriesData.length - 1]?.score ?? 0}/100
               </div>
-
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>LATEST SCORE</div>
-                <div style={{ fontWeight: 'bold' }}>
-                  {seriesData[seriesData.length - 1]?.score ?? 0}/100
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>DATA POINTS</div>
-                <div>{data.totalSnapshots} snapshots</div>
-              </div>
-
-              <div style={{ marginBottom: '15px' }}>
-                <div style={{ color: '#666', fontSize: '11px' }}>APPEARANCES</div>
-                <div>{seriesData.filter(s => s.score > 0).length} / {data.totalSnapshots}</div>
-              </div>
+            </div>
+            
+            <div>
+              <div style={{ color: '#000', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>Window Appearances</div>
+              <div style={{ fontWeight: 'bold', color: '#333', fontFamily: 'monospace', fontSize: '16px' }}>{seriesData.filter(s => s.score > 0).length} / {data.totalSnapshots}</div>
             </div>
           </div>
         </div>

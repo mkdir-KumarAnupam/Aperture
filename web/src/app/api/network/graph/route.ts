@@ -3,9 +3,16 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function GET() {
+export async function GET(req: Request) {
     try {
-        const edges = await prisma.edge.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
+        const { searchParams } = new URL(req.url);
+        const q = searchParams.get('q');
+        
+        const edges = await prisma.edge.findMany({ 
+            where: q ? { trendLabel: { contains: q } } : {},
+            orderBy: { createdAt: 'desc' }, 
+            take: 500 
+        });
 
         const nodeMap: Record<string, { id: string; edgeCount: number; isTarget: boolean }> = {};
         for (const edge of edges) {

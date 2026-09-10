@@ -24,6 +24,31 @@ model Post {
   sourceLayer     String   // "trend_seed" | "keyword_search" | "author_lookup"
   authorHandle    String?  // Name or handle of the author
   trendLabel      String?  // Which trend keyword this post was found under
+  
+  // --- X Specific Data Eng Fields ---
+  conversationId  String?
+  possiblySensitive Boolean?
+  replyCount      Int?
+  quoteCount      Int?
+  bookmarkCount   Int?
+  impressionCount Int?
+  attachments     String?  // JSON string of media URLs
+  quoteTweetId    String?
+
+  // --- Reddit Specific Data Eng Fields ---
+  subreddit       String?
+  title           String?
+  upvoteRatio     Float?
+  numComments     Int?
+  linkFlairText   String?
+  isSelf          Boolean?
+  externalUrl     String?
+  permalink       String?
+  depth           Int?
+  isSubmitter     Boolean?
+  parentId        String?
+  crosspostParentId String?
+
   createdAt       DateTime @default(now())
 }
 
@@ -35,10 +60,22 @@ model Author {
   bio           String?
   location      String?
   region        String?  // parsed from location (e.g. "India", "US")
-  profession    String?  // inferred from bio keywords
   followerCount Int?
   verified      Boolean?
   accountAge    DateTime?
+  
+  // --- X Specific Author Fields ---
+  name            String?
+  profileImageUrl String?
+  pinnedTweetId   String?
+  url             String?
+
+  // --- Reddit Specific Author Fields ---
+  linkKarma       Int?
+  commentKarma    Int?
+  isGold          Boolean?
+  isMod           Boolean?
+
   lastFetched   DateTime @default(now())
 }
 
@@ -52,6 +89,7 @@ model Trend {
   category        String?  // Politics | Entertainment | Sports | Tech | Other
   totalEngagement Int?     // sum of all engagement across tweets for this trend
   batchId         String   // groups all trends from one scrape run
+  subreddit       String?
   fetchedAt       DateTime @default(now())
 
   @@index([label, fetchedAt])
@@ -81,4 +119,14 @@ model HashtagPair {
   createdAt DateTime @default(now())
 
   @@unique([tagA, tagB, batchId])
+}
+
+model Subreddit {
+  id                String   @id // Subreddit display name
+  displayName       String?
+  subscribers       Int?
+  publicDescription String?
+  activeUserCount   Int?
+  createdUtc        DateTime?
+  lastFetched       DateTime @default(now())
 }

@@ -24,3 +24,7 @@ __pycache__/
 .devin/
 AGENTS.md
 CLAUDE.md
+
+# Logs and Data
+scraper/*.log
+scraper/data/

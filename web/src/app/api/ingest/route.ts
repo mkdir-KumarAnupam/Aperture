@@ -34,8 +34,9 @@ function parseRegionLocally(location: string | null | undefined): string {
 export async function POST(req: Request) {
     try {
         let targetTrendLabel: string | null = null;
+        let body: any = {};
         try {
-            const body = await req.json();
+            body = await req.json();
             if (body.targetTrendLabel) targetTrendLabel = body.targetTrendLabel;
         } catch(e) {}
 
@@ -47,14 +48,22 @@ export async function POST(req: Request) {
             await prisma.edge.deleteMany({ where: { trendLabel: targetTrendLabel } });
         }
 
-        let trendsData: any[] = [];
-        try {
-            const trendRes = await fetch(`${SCRAPER_API_URL}/scrape/x/trends`);
-            if (trendRes.ok) {
-                const json = await trendRes.json();
-                trendsData = (json.data || []).slice(0, 10); // Fetch top 10 trends for rolling updates
-            }
-        } catch (e) { console.error("Failed to fetch X trends", e); }
+        let trendsData: any[] = typeof body.trendsData !== 'undefined' ? body.trendsData : [];
+        if (trendsData.length === 0) {
+            try {
+                const trendRes = await fetch(`${SCRAPER_API_URL}/scrape/x/trends`);
+                if (trendRes.ok) {
+                    const json = await trendRes.json();
+                    trendsData = (json.data || []).slice(0, 10);
+                }
+                const redditTrendRes = await fetch(`${SCRAPER_API_URL}/scrape/reddit/trends`);
+                if (redditTrendRes.ok) {
+                    const rjson = await redditTrendRes.json();
+                    const redditData = (rjson.data || []).slice(0, 5);
+                    trendsData = [...trendsData, ...redditData];
+                }
+            } catch (e) { console.error("Failed to fetch trends", e); }
+        }
 
         const trendDbIds: Record<string, string> = {};
         for (const trend of trendsData) {
@@ -63,7 +72,7 @@ export async function POST(req: Request) {
             const tCount = previousTrend?.tweetCount || 0;
 
             const created = await prisma.trend.create({
-                data: { platform: trend.platform, label: trend.label, volume: trend.volume, rank: trend.rank, batchId, tweetCount: tCount, totalEngagement: totalEng }
+                data: { platform: trend.platform, label: trend.label, volume: trend.volume, rank: trend.rank, subreddit: trend.subreddit, batchId, tweetCount: tCount, totalEngagement: totalEng }
             });
             trendDbIds[trend.label] = created.id;
         }
@@ -115,7 +124,15 @@ export async function POST(req: Request) {
                                 engagement: JSON.stringify(engagement), replyToId: post.replyToId,
                                 replyToAuthorId: post.replyToAuthorId, forwardFromId: post.forwardFromId,
                                 hashtags: JSON.stringify(hashtags), sourceLayer: post.sourceLayer,
-                                authorHandle: handle, trendLabel
+                                authorHandle: handle, trendLabel,
+                                conversationId: post.conversationId,
+                                possiblySensitive: post.possiblySensitive,
+                                replyCount: post.replyCount,
+                                quoteCount: post.quoteCount,
+                                bookmarkCount: post.bookmarkCount,
+                                impressionCount: post.impressionCount,
+                                attachments: post.attachments,
+                                quoteTweetId: post.quoteTweetId
                             }
                         });
                         count++; totalEng += engTotal;
@@ -149,9 +166,43 @@ export async function POST(req: Request) {
                                 engagement: JSON.stringify(engagement), replyToId: post.replyToId,
                                 replyToAuthorId: post.replyToAuthorId, forwardFromId: post.forwardFromId,
                                 hashtags: JSON.stringify(hashtags), sourceLayer: post.sourceLayer,
-                                authorHandle: handle, trendLabel
+                                authorHandle: handle, trendLabel,
+                                subreddit: post.subreddit,
+                                title: post.title,
+                                upvoteRatio: post.upvoteRatio,
+                                numComments: post.numComments,
+                                linkFlairText: post.linkFlairText,
+                                isSelf: post.isSelf,
+                                externalUrl: post.externalUrl,
+                                permalink: post.permalink,
+                                crosspostParentId: post.crosspostParentId
                             }
                         });
+                        
+                        try {
+                            const commentsRes = await fetch(`${SCRAPER_API_URL}/scrape/reddit/comments?post_id=${post.postId}&limit=10`);
+                            if (commentsRes.ok) {
+                                const cjson = await commentsRes.json();
+                                for (const comment of (cjson.data || [])) {
+                                    await prisma.post.upsert({
+                                        where: { postId: comment.postId }, update: {},
+                                        create: {
+                                            id: `red_${comment.postId}`, platform: comment.platform, postId: comment.postId,
+                                            authorId: comment.authorId, text: comment.text, timestamp: new Date(comment.timestamp),
+                                            engagement: JSON.stringify(comment.engagement), replyToId: comment.replyToId,
+                                            hashtags: "[]", sourceLayer: comment.sourceLayer,
+                                            authorHandle: comment.authorHandle, trendLabel,
+                                            subreddit: comment.subreddit,
+                                            permalink: comment.permalink,
+                                            depth: comment.depth,
+                                            isSubmitter: comment.isSubmitter,
+                                            parentId: comment.replyToId
+                                        }
+                                    });
+                                    if (comment.authorHandle) allAuthorsToFetch.add(`reddit:${comment.authorHandle}`);
+                                }
+                            }
+                        } catch (e) { console.error(`Failed to fetch comments for ${post.postId}`); }
                         count++; totalEng += engTotal;
                         tweetsTextPerTrend[trendLabel].push(post.text || "");
                         if (hashtags.length >= 2) allHashtagSets.push(hashtags);
@@ -202,12 +253,16 @@ export async function POST(req: Request) {
                     if (json.data) {
                         await prisma.author.upsert({
                             where: { authorId: json.data.authorId },
-                            update: { handle: json.data.handle, bio: json.data.bio, location: json.data.location, region: json.data.region, profession: json.data.profession, followerCount: json.data.followerCount, verified: json.data.verified },
+                            update: { handle: json.data.handle, bio: json.data.bio, location: json.data.location, region: json.data.region, followerCount: json.data.followerCount, verified: json.data.verified },
                             create: {
                                 id: `${platform}_${json.data.authorId}`, platform: json.data.platform, authorId: json.data.authorId, handle: json.data.handle,
-                                bio: json.data.bio, location: json.data.location, region: json.data.region, profession: json.data.profession,
+                                bio: json.data.bio, location: json.data.location, region: json.data.region,
                                 followerCount: json.data.followerCount, verified: json.data.verified,
-                                accountAge: json.data.accountAge ? new Date(json.data.accountAge) : null
+                                accountAge: json.data.accountAge ? new Date(json.data.accountAge) : null,
+                                name: json.data.name, profileImageUrl: json.data.profileImageUrl,
+                                pinnedTweetId: json.data.pinnedTweetId, url: json.data.url,
+                                linkKarma: json.data.linkKarma, commentKarma: json.data.commentKarma,
+                                isGold: json.data.isGold, isMod: json.data.isMod
                             }
                         });
                     }

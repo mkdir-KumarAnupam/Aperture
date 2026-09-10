@@ -5,7 +5,11 @@ const prisma = new PrismaClient();
 
 export async function GET(req: Request) {
     try {
+        const { searchParams } = new URL(req.url);
+        const q = searchParams.get('q');
+        
         const allTrends = await prisma.trend.findMany({
+            where: q ? { label: { contains: q } } : {},
             orderBy: { fetchedAt: 'asc' },
             select: {
                 label: true,

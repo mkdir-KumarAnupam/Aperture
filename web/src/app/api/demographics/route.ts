@@ -3,10 +3,18 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function GET() {
+export async function GET(req: Request) {
     try {
-        const authors = await prisma.author.findMany();
-        const posts = await prisma.post.findMany({ select: { detectedLang: true, trendLabel: true } });
+        const { searchParams } = new URL(req.url);
+        const q = searchParams.get('q');
+        
+        const authors = await prisma.author.findMany({
+            where: q ? { OR: [{ handle: { contains: q } }, { bio: { contains: q } }, { authorId: { contains: q } }] } : {}
+        });
+        const posts = await prisma.post.findMany({ 
+            where: q ? { text: { contains: q } } : {},
+            select: { detectedLang: true, trendLabel: true } 
+        });
 
         const regionDist: Record<string, number> = {};
         for (const a of authors) { 
@@ -16,7 +24,7 @@ export async function GET() {
 
         const profDist: Record<string, number> = {};
         for (const a of authors) { 
-            const p = a.profession || 'Unknown'; 
+            const p = (a as any).profession || 'Unknown'; 
             profDist[p] = (profDist[p] || 0) + 1; 
         }
 
