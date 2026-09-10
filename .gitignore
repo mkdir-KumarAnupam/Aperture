@@ -16,3 +16,11 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Agents
+.agents/
+.claude/
+.cursor/
+.devin/
+AGENTS.md
+CLAUDE.md
