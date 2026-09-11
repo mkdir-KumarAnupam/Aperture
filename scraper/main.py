@@ -133,14 +133,13 @@ def classify_trend(label: str, tweets_text: list) -> str:
 
 @app.get("/scrape/reddit/trends")
 async def get_reddit_trends():
-    # Define list of top influential Indian subreddits
     subreddits = [
-        "india", "mumbai", "delhi", "bollywood", "unitedstatesofindia", 
-        "Indiasocial", "IndianStockMarket", "developersIndia", "IndianGaming", 
+        "india", "mumbai", "delhi", "bollywood", "unitedstatesofindia",
+        "Indiasocial", "IndianStockMarket", "developersIndia", "IndianGaming",
         "BollyBlindsNGossip", "pune", "bangalore", "hyderabad", "kolkata"
     ]
     posts = []
-    
+
     async with get_reddit_client() as client:
         for sub in subreddits:
             import asyncio
@@ -158,7 +157,7 @@ async def get_reddit_trends():
                         posts.append({"title": title, "score": score, "subreddit": subreddit_name})
             except Exception as e:
                 print(f"Failed to fetch Reddit hot from {sub}: {e}")
-                
+
     posts.sort(key=lambda x: x["score"], reverse=True)
     formatted_trends = []
     for index, p in enumerate(posts[:10]):
@@ -285,7 +284,7 @@ async def get_x_author(handle: str):
         user = await x_client.get_user_by_screen_name(handle)
         bio = user.description or ""
         location = user.location or ""
-        
+
         formatted_author = {
             "platform": "x",
             "authorId": str(user.id),
@@ -386,7 +385,7 @@ async def get_reddit_comments(post_id: str, limit: int = 100):
             dump_raw_data("reddit_comments", data)
             if len(data) < 2:
                 return {"status": "success", "data": []}
-            
+
             comments_raw = data[1].get("data", {}).get("children", [])
             formatted_comments = []
 
@@ -398,7 +397,7 @@ async def get_reddit_comments(post_id: str, limit: int = 100):
                     author = cd.get("author")
                     body = cd.get("body", "")
                     cid = cd.get("id")
-                    
+
                     if author and body:
                         formatted_comments.append({
                             "platform": "reddit",
@@ -418,12 +417,12 @@ async def get_reddit_comments(post_id: str, limit: int = 100):
                             "permalink": cd.get("permalink"),
                             "sourceLayer": "comment_tree"
                         })
-                    
+
                     replies = cd.get("replies")
                     if replies and isinstance(replies, dict):
                         children = replies.get("data", {}).get("children", [])
                         parse_comments(children, cid, depth + 1)
-            
+
             parse_comments(comments_raw, post_id, 1)
             return {"status": "success", "data": formatted_comments}
         except Exception as e:
