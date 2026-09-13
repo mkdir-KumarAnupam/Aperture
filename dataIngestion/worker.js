@@ -47,3 +47,61 @@ const demographicWorker = new Worker('DemographicQueue', async (job) => {
     
     return { status: 'success' };
 }, { connection: createRedisConnection() });
+
+// ==========================================
+// WORKER 3: TREND ANALYSIS
+// ==========================================
+const trendWorker = new Worker('TrendQueue', async (job) => {
+    const data = job.data;
+    console.log(`[Trend] Processing ${data.targetTrendLabel}...`);
+    
+    await delay(1000); 
+    // -> Ashutosh code will go here of trend Analysis
+    
+    // const query = `INSERT INTO trends (trend_label, raw_data) VALUES ($1, $2)`;
+    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
+
+    console.log("Trend worker completed his work ...");
+    console.log(data);
+    
+    return { status: 'success' };
+}, { connection: createRedisConnection() });
+
+// ==========================================
+// WORKER 4: NETWORK ANALYSIS
+// ==========================================
+const networkWorker = new Worker('NetworkQueue', async (job) => {
+    const data = job.data;
+    console.log(`[Network] Processing ${data.targetTrendLabel}...`);
+    
+    await delay(1000); 
+    // -> Ashustosh code will go here of network analysis
+    
+    // const query = `INSERT INTO networks (trend_label, raw_data) VALUES ($1, $2)`;
+    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
+
+    console.log("Netowork worker completed his work ...");
+    console.log(data);
+    
+    return { status: 'success' };
+}, { connection: createRedisConnection() });
+
+
+// ==========================================
+// EVENT LISTENERS (For Logging)
+// ==========================================
+// We loop through all workers and attach listeners so we can see 
+// what is happening in the terminal in real-time.
+const workers = [sentimentWorker, demographicWorker, trendWorker, networkWorker];
+
+workers.forEach(worker => {
+    // Fired when a job finishes and returns a successful status
+    worker.on('completed', (job) => {
+        console.log(`✅ [${worker.name}] Finished job ${job.id}`);
+    });
+    
+    // Fired if the Postgres insert fails or the process crashes
+    worker.on('failed', (job, err) => {
+        console.error(`❌ [${worker.name}] Failed job ${job.id}:`, err.message);
+    });
+});
