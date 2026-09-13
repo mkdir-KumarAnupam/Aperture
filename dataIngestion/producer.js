@@ -32,8 +32,15 @@ async function fetchBulkStreamData(batchLimit = 10) {
             try {
                 // Safely attempt to parse the JSON string into a JS object
                 const data = JSON.parse(rawJsonString);
-                const tweets = data.tweets.map(normalizeData);
-                const redditPosts = data.reddit_posts.map(normalizeData);
+                let targetTrendLabel = data.targetTrendLabel;
+                const tweets = data.tweets.map((temp) => {
+                    temp.trend_label = targetTrendLabel;
+                    normalizeData(temp);
+                });
+                const redditPosts = data.reddit_posts.map((temp) => {
+                    temp.trend_label = targetTrendLabel;
+                    normalizeData(temp);
+                });
 
                 parsedDataArray.push(...tweets, ...redditPosts);
                                 
