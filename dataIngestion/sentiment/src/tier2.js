@@ -50,7 +50,9 @@ async function callOllamaOnce(text) {
   });
 
   if (!response.ok) {
-    throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Ollama request failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = await response.json();
@@ -64,15 +66,26 @@ async function callOllamaOnce(text) {
  * @returns {Promise<{label: string, score: number, reason: string}>}
  */
 export async function classifyTier2(text) {
-  const [runA, runB] = await Promise.all([callOllamaOnce(text), callOllamaOnce(text)]);
+  const [runA, runB] = await Promise.all([
+    callOllamaOnce(text),
+    callOllamaOnce(text),
+  ]);
 
   // If either call failed to parse, fall back to whichever succeeded.
   if (!runA && !runB) {
-    return { label: "neutral", score: 0, reason: "Tier 2 failed to produce parseable output." };
+    return {
+      label: "neutral",
+      score: 0,
+      reason: "Tier 2 failed to produce parseable output.",
+    };
   }
   if (!runA || !runB) {
     const run = runA || runB;
-    return { label: run.sentiment, score: run.confidence * 0.7, reason: run.reason };
+    return {
+      label: run.sentiment,
+      score: run.confidence * 0.7,
+      reason: run.reason,
+    };
   }
 
   const agree = runA.sentiment === runB.sentiment;
@@ -83,6 +96,8 @@ export async function classifyTier2(text) {
     // Disagreement between two runs is a strong signal the model itself is
     // unsure, even if each run individually claimed high confidence.
     score: agree ? avgConfidence : avgConfidence * 0.4,
-    reason: agree ? runA.reason : `Runs disagreed (${runA.sentiment} vs ${runB.sentiment}).`,
+    reason: agree
+      ? runA.reason
+      : `Runs disagreed (${runA.sentiment} vs ${runB.sentiment}).`,
   };
 }

@@ -1,7 +1,7 @@
 // Tier 1: fast local classifier (no GPU needed, runs in pure JS via transformers.js)
 // Model: cardiffnlp/twitter-roberta-base-sentiment-latest (ported for transformers.js as Xenova/*)
 // This model was fine-tuned specifically on tweets, so it handles slang, hashtags,
-// and emojis well — a good fit for X/Reddit/Telegram scraped text.
+
 
 import { pipeline } from "@xenova/transformers";
 

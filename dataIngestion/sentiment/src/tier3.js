@@ -2,7 +2,6 @@
 // tiers were unsure. Uses Groq's OpenAI-compatible endpoint (free tier as of
 // writing) running Llama 3.3 70B. Swap the base URL/model to use OpenRouter
 // or another provider if you prefer — the OpenAI-style chat format is the same.
-
 import fetch from "node-fetch";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
