@@ -217,6 +217,7 @@ function parseRedditTimestamp(ts) {
 function normalizeUnknown(post, platform) {
   const observedAt = toIsoOrNull(post.observedAt);
   return {
+    trend_label : post.trend_label,
     postId: post.postId ?? null,
     platform: platform, // null if truly undetected, "telegram" if just not built yet
     conversationId: post.conversationId ?? post.postId ?? null,
