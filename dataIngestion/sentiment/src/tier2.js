@@ -16,7 +16,7 @@ Classify the sentiment of the post below as exactly one of: positive, neutral, n
 Also give your confidence from 0 to 1, and a one-sentence reason.
 
 Respond with ONLY valid JSON in this exact shape, no extra text, no markdown fences:
-{"sentiment": "positive" | "neutral" | "negative", "confidence": 0.0-1.0, "reason": "..."}
+{"sentiment": "positive" | "neutral" | "negative", "confidence": 0.0-1.0}
 
 Post:
 """${text}"""`;
@@ -30,7 +30,6 @@ function parseModelJson(raw) {
     return {
       sentiment: String(parsed.sentiment || "neutral").toLowerCase(),
       confidence: Number(parsed.confidence) || 0,
-      reason: parsed.reason || "",
     };
   } catch {
     return null;
@@ -50,7 +49,9 @@ async function callOllamaOnce(text) {
   });
 
   if (!response.ok) {
-    throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Ollama request failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = await response.json();
@@ -64,15 +65,18 @@ async function callOllamaOnce(text) {
  * @returns {Promise<{label: string, score: number, reason: string}>}
  */
 export async function classifyTier2(text) {
-  const [runA, runB] = await Promise.all([callOllamaOnce(text), callOllamaOnce(text)]);
+  const [runA, runB] = await Promise.all([
+    callOllamaOnce(text),
+    callOllamaOnce(text),
+  ]);
 
   // If either call failed to parse, fall back to whichever succeeded.
   if (!runA && !runB) {
-    return { label: "neutral", score: 0, reason: "Tier 2 failed to produce parseable output." };
+    return { label: "neutral", score: 0 };
   }
   if (!runA || !runB) {
     const run = runA || runB;
-    return { label: run.sentiment, score: run.confidence * 0.7, reason: run.reason };
+    return { label: run.sentiment, score: run.confidence * 0.7 };
   }
 
   const agree = runA.sentiment === runB.sentiment;
@@ -83,6 +87,5 @@ export async function classifyTier2(text) {
     // Disagreement between two runs is a strong signal the model itself is
     // unsure, even if each run individually claimed high confidence.
     score: agree ? avgConfidence : avgConfidence * 0.4,
-    reason: agree ? runA.reason : `Runs disagreed (${runA.sentiment} vs ${runB.sentiment}).`,
   };
 }
