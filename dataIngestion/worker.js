@@ -21,8 +21,8 @@ const sentimentWorker = new Worker(
 
     // Simulate 2 seconds of heavy processing
     async function main() {
-      console.log(`Analyzing ${samplePosts.length} posts...\n`);
-      const results = await analyzeBatch(samplePosts);
+      console.log(`Analyzing ${data.length} posts...\n`);
+      const results = await analyzeBatch(data);
 
       await writeFile("results.json", JSON.stringify(results, null, 2));
       console.log("\nSaved results to results.json");
