@@ -2,7 +2,7 @@ const { redis } = require('./config');
 const { SentimentQueue, DemographicQueue, TrendQueue, NetworkQueue } = require('./queues');
 const { normalizeData } = require("./normalizeData");
 
-const INTERVAL_MS = 30000; // Run every 60 seconds
+const INTERVAL_MS = 60000; // Run every 60 seconds
 
 /**
  * Fetches a batch of data from the Redis Stream and deletes the processed items.
@@ -63,7 +63,7 @@ async function orchestrateData() {
     try {
         console.log("\n⏳ Checking Upstash Stream for new data...");
         
-        // Grab up to 50 records from the stream
+        // Grab up to 10 records from the stream
         const bulkData = await fetchBulkStreamData(10);
         
         if (bulkData.length === 0) {
