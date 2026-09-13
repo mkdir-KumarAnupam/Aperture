@@ -14,7 +14,7 @@ function buildMessages(text) {
       role: "system",
       content:
         "You are a precise sentiment classification engine for social media posts. " +
-        'Respond with ONLY valid JSON: {"sentiment": "positive"|"neutral"|"negative", "confidence": 0.0-1.0, "reason": "..."}',
+        'Respond with ONLY valid JSON: {"sentiment": "positive"|"neutral"|"negative", "confidence": 0.0-1.0}',
     },
     {
       role: "user",
@@ -30,13 +30,11 @@ function parseModelJson(raw) {
     return {
       label: String(parsed.sentiment || "neutral").toLowerCase(),
       score: Number(parsed.confidence) || 0.9, // big models rarely self-report; default high
-      reason: parsed.reason || "",
     };
   } catch {
     return {
       label: "neutral",
       score: 0,
-      reason: "Tier 3 failed to produce parseable output.",
     };
   }
 }

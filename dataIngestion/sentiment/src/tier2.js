@@ -16,7 +16,7 @@ Classify the sentiment of the post below as exactly one of: positive, neutral, n
 Also give your confidence from 0 to 1, and a one-sentence reason.
 
 Respond with ONLY valid JSON in this exact shape, no extra text, no markdown fences:
-{"sentiment": "positive" | "neutral" | "negative", "confidence": 0.0-1.0, "reason": "..."}
+{"sentiment": "positive" | "neutral" | "negative", "confidence": 0.0-1.0}
 
 Post:
 """${text}"""`;
@@ -30,7 +30,6 @@ function parseModelJson(raw) {
     return {
       sentiment: String(parsed.sentiment || "neutral").toLowerCase(),
       confidence: Number(parsed.confidence) || 0,
-      reason: parsed.reason || "",
     };
   } catch {
     return null;
@@ -78,6 +77,7 @@ export async function classifyTier2(text) {
       score: 0,
       reason: "Tier 2 failed to produce parseable output.",
     };
+    return { label: "neutral", score: 0 };
   }
   if (!runA || !runB) {
     const run = runA || runB;
@@ -86,6 +86,7 @@ export async function classifyTier2(text) {
       score: run.confidence * 0.7,
       reason: run.reason,
     };
+    return { label: run.sentiment, score: run.confidence * 0.7 };
   }
 
   const agree = runA.sentiment === runB.sentiment;
