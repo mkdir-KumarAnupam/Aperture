@@ -4,6 +4,7 @@
 // or another provider if you prefer — the OpenAI-style chat format is the same.
 
 import fetch from "node-fetch";
+import "dotenv/config.js";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";

@@ -2,6 +2,7 @@
   "name": "BullMq",
   "version": "1.0.0",
   "description": "",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -17,9 +18,9 @@
     }
   },
   "packageManager": "pnpm@11.23.0",
-  "type": "commonJS",
   "dependencies": {
     "bullmq": "^6.3.4",
-    "ioredis": "^6.0.0"
+    "ioredis": "^6.0.0",
+    "dotenv": "^16.4.5"
   }
 }

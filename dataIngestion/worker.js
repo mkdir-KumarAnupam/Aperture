@@ -1,9 +1,8 @@
 const { Worker } = require("bullmq");
 // const { redis, pgClient } = require('./config');
 const { createRedisConnection } = require("./config");
-import "dotenv/config";
-import { writeFile } from "node:fs/promises";
-import { analyzeBatch } from "./sentiment/src/pipeline";
+const { writeFile } = require("node:fs/promises");
+const { analyzeBatch } = require("./sentiment/src/pipeline");
 
 // Helper function to simulate a heavy processing task (like calling an AI model)
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,9 +33,9 @@ const sentimentWorker = new Worker(
       console.log("Tier usage:", tierCounts);
     }
 
-    main().catch((err) => {
+    await main().catch((err) => {
       console.error("Pipeline failed:", err);
-      process.exit(1);
+
     });
     // Insert the data into PostgreSQL
     // We use $1 and $2 to strictly prevent SQL injection attacks

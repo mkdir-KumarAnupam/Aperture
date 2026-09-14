@@ -1,33 +1,35 @@
-const Redis = require('ioredis');
+const Redis = require("ioredis");
+require("dotenv").config();
+
 // const { Client } = require('pg');
 
 // ==========================================
 // 1. UPSTASH REDIS CONNECTION
 // ==========================================
-// We use ioredis because BullMQ requires it. 
-// CRITICAL: 'maxRetriesPerRequest' MUST be set to null. 
-// If you leave this out, BullMQ workers will crash because they 
+// We use ioredis because BullMQ requires it.
+// CRITICAL: 'maxRetriesPerRequest' MUST be set to null.
+// If you leave this out, BullMQ workers will crash because they
 // need to keep a continuous, unbroken connection open to listen for jobs.
 
 const createRedisConnection = () => {
-    const client = new Redis(process.env.REDIS_URL, {
-        maxRetriesPerRequest: null,
-        keepAlive: 10000,
-        tls: {
-            rejectUnauthorized: false
-        }
-    });
- 
-    // CRITICAL FIX: Catch the error event so it doesn't crash the console
-    client.on('error', (err) => {
-        // We mute ECONNRESET because BullMQ auto-reconnects anyway.
-        // We only log if it's a real, different error.
-        if (err.code !== 'ECONNRESET') {
-            console.error('Redis Background Error:', err.message);
-        }
-    });
-    
-    return client;
+  const client = new Redis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    keepAlive: 10000,
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
+
+  // CRITICAL FIX: Catch the error event so it doesn't crash the console
+  client.on("error", (err) => {
+    // We mute ECONNRESET because BullMQ auto-reconnects anyway.
+    // We only log if it's a real, different error.
+    if (err.code !== "ECONNRESET") {
+      console.error("Redis Background Error:", err.message);
+    }
+  });
+
+  return client;
 };
 
 // ==========================================
@@ -46,11 +48,11 @@ const createRedisConnection = () => {
 
 const redis = createRedisConnection();
 
-redis.on('error', (err) => {
-    console.error("Shared Redis Connection Error:", err.message);
+redis.on("error", (err) => {
+  console.error("Shared Redis Connection Error:", err.message);
 });
 
-module.exports = { 
-    createRedisConnection, 
-    redis
+module.exports = {
+  createRedisConnection,
+  redis,
 };
