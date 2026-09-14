@@ -1,4 +1,5 @@
 const Redis = require('ioredis');
+require('dotenv').config();
 // const { Client } = require('pg');
 
 // ==========================================
