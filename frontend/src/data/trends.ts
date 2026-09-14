@@ -241,11 +241,11 @@ const generativeAI: TrendAnalytics = {
 
   demographics: {
     ageGender: [
-      { ageRange: "18–24", male: 19, female: 11, other: 2 },
-      { ageRange: "25–34", male: 24, female: 16, other: 2 },
-      { ageRange: "35–44", male: 12, female: 7, other: 1 },
-      { ageRange: "45–54", male: 4, female: 2, other: 0 },
-      { ageRange: "55+", male: 0, female: 0, other: 0 },
+      { ageRange: "18–24", male: 11, female: 7.5, other: 1 },
+      { ageRange: "25–34", male: 13.5, female: 9, other: 1 },
+      { ageRange: "35–44", male: 7.5, female: 4.5, other: 0.5 },
+      { ageRange: "45–54", male: 3.8, female: 2, other: 0.4 },
+      { ageRange: "55+", male: 2, female: 1, other: 0.2 },
     ],
     languages: [
       { language: "English", share: 52 },
