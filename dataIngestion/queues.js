@@ -1,19 +1,12 @@
 const { Queue } = require('bullmq');
-const { redis } = require('./config');
+const { localSharedRedis } = require('./config');
 
-// ==========================================
-// QUEUE INITIALIZATION
-// ==========================================
-// We create 4 separate queues for our 4 distinct processing tasks.
-// We pass in the shared 'redis' connection from config.js.
-const SentimentQueue = new Queue('SentimentQueue', { connection: redis });
-const DemographicQueue = new Queue('DemographicQueue', { connection: redis });
-const TrendQueue = new Queue('TrendQueue', { connection: redis });
-const NetworkQueue = new Queue('NetworkQueue', { connection: redis });
+const defaultOpts = { connection: localSharedRedis };
 
 module.exports = { 
-    SentimentQueue, 
-    DemographicQueue, 
-    TrendQueue, 
-    NetworkQueue 
+    SentimentQueue: new Queue('SentimentQueue', defaultOpts), 
+    DemographicQueue: new Queue('DemographicQueue', defaultOpts), 
+    TrendQueue: new Queue('TrendQueue', defaultOpts), 
+    NetworkQueue: new Queue('NetworkQueue', defaultOpts), 
+    DatabaseQueue: new Queue('DatabaseQueue', defaultOpts) // Parent Gatherer
 };

@@ -1,87 +1,85 @@
-const { redis } = require("./config");
-const {
-  SentimentQueue,
-  DemographicQueue,
-  TrendQueue,
-  NetworkQueue,
-} = require("./queues");
-const { normalizeData } = require("./normalizeData");
-require("dotenv").config();
+const { FlowProducer } = require("bullmq");
+const { upstashRedis, localSharedRedis } = require('./config');
+const { normalizeData } = require("./normalizeData"); // Assuming your previous script
 
-const INTERVAL_MS = 60000; // Run every 60 seconds
+const flowProducer = new FlowProducer({ connection: localSharedRedis });
 
-/**
- * Fetches a batch of data from the Redis Stream and deletes the processed items.
- * @param {number} batchLimit - Maximum number of stream entries to fetch at once.
- */
-async function fetchBulkStreamData(batchLimit = 10) {
-  // 1. EXTRACT: Fetch up to 'batchLimit' entries from the oldest (-) to newest (+)
-  const streamEntries = await redis.xrange(
-    "scrape:events",
-    "-",
-    "+",
-    "COUNT",
-    batchLimit,
-  );
+const INTERVAL_MS = 60000; 
+const BATCH_LIMIT = 1;
 
-  // If the stream is empty, just return an empty array
-  if (streamEntries.length === 0) return [];
+async function fetchBulkStreamData(batchLimit = BATCH_LIMIT) {
+    const streamEntries = await upstashRedis.xrange('scrape:events', '-', '+', 'COUNT', batchLimit);
+    if (streamEntries.length === 0) return [];
 
   const parsedDataArray = [];
   const idsToDelete = [];
 
-  // 2. TRANSFORM: Loop through the raw stream format to extract our JSON
-  for (const entry of streamEntries) {
-    const entryId = entry[0]; // The unique timestamp ID of the stream entry
-    const fieldsAndValues = entry[1]; // Array of keys/values, e.g., ['data', '{...}']
+    for (const entry of streamEntries) {
+        const [entryId, fieldsAndValues] = entry;
+        const dataIndex = fieldsAndValues.indexOf('data');
+        
+        if (dataIndex !== -1) {
+            try {
+                const data = JSON.parse(fieldsAndValues[dataIndex + 1]);
+                let targetTrendLabel = data?.targetTrendLabel || "Unknown Trend";
 
-    // Find where the actual JSON string is hiding in the array
-    const dataIndex = fieldsAndValues.indexOf("data");
+                const tweets = data.tweets?.map(normalizeData) || [];
+                const redditPosts = data.reddit_posts?.map(normalizeData) || [];
+                
+                parsedDataArray.push({ 
+                    trend_label: targetTrendLabel, 
+                    posts: [...tweets, ...redditPosts] 
+                });
 
-    if (dataIndex !== -1) {
-      const rawJsonString = fieldsAndValues[dataIndex + 1];
-
-      try {
-        // Safely attempt to parse the JSON string into a JS object
-        const data = JSON.parse(rawJsonString);
-        let targetTrendLabel = data?.targetTrendLabel || "";
-
-        const tweets = data.tweets?.map(normalizeData) || [];
-        const redditPosts = data.reddit_posts?.map(normalizeData) || [];
-        parsedDataArray.push({
-          trend_label: targetTrendLabel,
-          posts: [...tweets, ...redditPosts],
-        });
-
-        // Keep track of this ID so we can delete it from the stream later
-        idsToDelete.push(entryId);
-      } catch (error) {
-        console.error(`Failed to parse Stream ID ${entryId}`, error.message);
-        // We STILL add broken IDs to the delete list so they don't block the queue forever
-        idsToDelete.push(entryId);
-      }
+                idsToDelete.push(entryId);
+            } catch (error) {
+                console.error(`Failed to parse Stream ID ${entryId}:`, error.message);
+                idsToDelete.push(entryId); 
+            }
+        }
     }
-  }
-  // 3. CLEANUP: Delete the entries we just handled so we don't process them again next minute
+    // 3. CLEANUP: Delete the entries we just handled so we don't process them again next minute
   // if (idsToDelete.length > 0) {
   //     await redis.xdel('scrape:events', ...idsToDelete);
   // }
 
-  return parsedDataArray;
-}
+    // Safely delete from Upstash to prevent duplicate processing
+    // if (idsToDelete.length > 0) {
+    //     await upstashRedis.xdel('scrape:events', ...idsToDelete);
+    // }
 
-/**
- * The main loop that connects the extraction to the queues.
- */
+    return parsedDataArray;
+  }
+  
+
 async function orchestrateData() {
-  try {
-    console.log("\n⏳ Checking Upstash Stream for new data...");
+    try {
+        console.log("\n⏳ Polling Upstash for stream data...");
+        const bulkData = await fetchBulkStreamData(BATCH_LIMIT);
+        
+        if (bulkData.length === 0) return console.log("   No new data. Waiting...");
 
-    // Grab up to 10 records from the stream
-    const bulkData = await fetchBulkStreamData(1);
+        console.log(`📦 Fetched ${bulkData.length} records. Dispatching Flow Trees locally...`);
 
-    if (bulkData.length === 0) {
-      return console.log("   No new data. Waiting for next interval...");
+        // Build Scatter-Gather trees
+        const flowTrees = bulkData.map(actualData => ({
+            name: "merge-and-save",
+            queueName: "DatabaseQueue",
+            data: { trend_label: actualData.trend_label },
+            opts: { removeOnComplete: true, removeOnFail: false }, // Keep fails for debugging
+            children: [
+                { name: "sentiment", queueName: "SentimentQueue", data: actualData, opts: { removeOnComplete: true } },
+                { name: "demographic", queueName: "DemographicQueue", data: actualData, opts: { removeOnComplete: true } },
+                { name: "trend", queueName: "TrendQueue", data: actualData, opts: { removeOnComplete: true } },
+                { name: "network", queueName: "NetworkQueue", data: actualData, opts: { removeOnComplete: true } }
+            ]
+        }));
+
+        await flowProducer.addBulk(flowTrees);
+        console.log(`✅ Enqueued ${bulkData.length} trend flows to local BullMQ.`);
+
+    } catch (error) {
+        console.error("❌ Orchestration failed:", error);
     }
 
     console.log(
@@ -95,7 +93,7 @@ async function orchestrateData() {
     }));
 
     // 3. Dispatch to Redis using addBulk (Only 4 network calls total!)
-    await Promise.all([
+  try{  await Promise.all([
       SentimentQueue.addBulk(bulkJobs),
       DemographicQueue.addBulk(bulkJobs),
       TrendQueue.addBulk(bulkJobs),
@@ -108,11 +106,8 @@ async function orchestrateData() {
   } catch (error) {
     console.error("❌ Orchestration failed:", error);
   }
-}
 
-// ==========================================
-// START THE PRODUCER LOOP
-// ==========================================
-console.log(`🚀 Producer online. Polling every ${INTERVAL_MS / 1000} seconds.`);
-orchestrateData(); // Run the first batch immediately
-setInterval(orchestrateData, INTERVAL_MS); // Schedule it to run continuously
+
+console.log(`🚀 Hybrid Producer online. Polling Upstash every ${INTERVAL_MS / 1000}s.`);
+orchestrateData(); 
+setInterval(orchestrateData, INTERVAL_MS);

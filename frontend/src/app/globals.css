@@ -1,0 +1,349 @@
+@import "tailwindcss";
+
+/* ─── Design Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Palette */
+  --bg:           #F7F6F2;
+  --surface:      #FFFFFF;
+  --secondary:    #EEF2F5;
+  --soft-blue:    #DCE7EF;
+  --beige:        #E9E4DA;
+  --slate:        #52616B;
+  --navy:         #243746;
+  --navy-light:   #2E4A5C;
+
+  /* Accent */
+  --accent-blue:  #4A7FA5;
+  --accent-green: #5A9E7C;
+  --accent-amber: #C4943A;
+  --accent-coral: #C4614A;
+
+  /* Platform colors */
+  --x-color:       #1A1A2E;
+  --reddit-color:  #8B4513;
+  --telegram-color:#2B6CB0;
+
+  /* Chart colors */
+  --chart-1:  #4A7FA5;
+  --chart-2:  #C4943A;
+  --chart-3:  #5A9E7C;
+  --chart-4:  #C4614A;
+  --chart-5:  #7B68A4;
+
+  /* Typography */
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans:  'Inter', system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--navy);
+}
+
+/* ─── Base Styles ─────────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+  background-color: var(--bg);
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--navy);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--secondary); }
+::-webkit-scrollbar-thumb { background: var(--soft-blue); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
+
+/* ─── Trend Ribbon ─────────────────────────────────────────────────────────── */
+.ribbon-track {
+  display: flex;
+  animation: ribbon-scroll 32s linear infinite;
+  white-space: nowrap;
+}
+
+.ribbon-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes ribbon-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ─── Section fade-in ──────────────────────────────────────────────────────── */
+.fade-in-section {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-in-section.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── Card ──────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.card-sm {
+  background: var(--surface);
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* ─── Platform chips ─────────────────────────────────────────────────────── */
+.platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chip-x        { background: #1A1A2E14; color: #1A1A2E; border: 1px solid #1A1A2E30; }
+.chip-reddit   { background: #FF450014; color: #8B4513; border: 1px solid #FF450030; }
+.chip-telegram { background: #0088CC14; color: #2B6CB0; border: 1px solid #0088CC30; }
+
+/* ─── Score bar ──────────────────────────────────────────────────────────── */
+.score-bar-fill {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+  transition: width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ─── Trend score ring (SVG) ─────────────────────────────────────────────── */
+.score-ring-circle {
+  transition: stroke-dashoffset 1s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ─── Sticky nav ─────────────────────────────────────────────────────────── */
+.sticky-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: rgba(247, 246, 242, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #E2E8F0;
+  transform: translateY(-100%);
+  transition: transform 0.3s ease;
+}
+.sticky-nav.visible {
+  transform: translateY(0);
+}
+
+/* ─── Post card ──────────────────────────────────────────────────────────── */
+.post-card {
+  background: var(--surface);
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 1.25rem;
+  transition: all 0.2s ease;
+}
+.post-card:hover {
+  border-color: var(--accent-blue);
+  box-shadow: 0 2px 12px rgba(74, 127, 165, 0.12);
+}
+
+/* ─── Hero ───────────────────────────────────────────────────────────────── */
+.hero-heading {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--accent-blue) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-panel {
+  height: calc(100svh - 32px);
+}
+
+/* The list always starts at three rows, then uses extra viewport capacity. */
+.hot-trend-row:nth-child(n + 4) { display: none; }
+
+@media (min-height: 780px), (min-width: 1440px) {
+  .hot-trend-row:nth-child(4) { display: grid; }
+}
+
+@media (min-height: 920px), (min-width: 1720px) {
+  .hot-trend-row:nth-child(5) { display: grid; }
+}
+
+@media (min-height: 1060px), (min-width: 1920px) {
+  .hot-trend-row:nth-child(6) { display: grid; }
+}
+
+/* ─── Hot trend card hover ───────────────────────────────────────────────── */
+.hot-trend-card {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid #E2E8F0;
+  background: var(--surface);
+}
+.hot-trend-card:hover {
+  border-color: var(--accent-blue);
+  box-shadow: 0 4px 20px rgba(74, 127, 165, 0.14);
+  transform: translateY(-2px);
+}
+.hot-trend-card.active {
+  border-color: var(--accent-blue);
+  background: linear-gradient(135deg, #F0F7FF 0%, #F7F6F2 100%);
+}
+
+/* ─── Search ─────────────────────────────────────────────────────────────── */
+.search-input {
+  width: 100%;
+  border: 2px solid #E2E8F0;
+  border-radius: 999px;
+  padding: 0.875rem 1.25rem 0.875rem 3rem;
+  font-size: 1rem;
+  color: var(--navy);
+  background: var(--surface);
+  transition: border-color 0.2s;
+  outline: none;
+}
+.search-input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(74, 127, 165, 0.12);
+}
+.search-input::placeholder { color: #9BA8B2; }
+
+/* ─── Utility ─────────────────────────────────────────────────────────────── */
+.section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+
+.trend-score-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: linear-gradient(135deg, var(--accent-blue), #5A9EC4);
+  color: white;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.prototype-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Responsive chart wrapper ───────────────────────────────────────────── */
+.chart-wrapper {
+  width: 100%;
+  overflow: hidden;
+}
+
+/* ─── Tooltip override ───────────────────────────────────────────────────── */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  border-radius: 8px !important;
+  border: 1px solid #E2E8F0 !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important;
+}
+
+/* ─── Map tooltip ─────────────────────────────────────────────────────────── */
+.map-tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: var(--navy);
+  color: white;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  z-index: 100;
+  max-width: 200px;
+  will-change: transform;
+}
+
+/* ─── Network graph container ────────────────────────────────────────────── */
+.network-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* ─── Section layout utilities ───────────────────────────────────────────── */
+.section-wide {
+  width: min(94vw, 1600px);
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+.section-full {
+  min-height: 100svh;
+  width: 100%;
+  padding-block: clamp(2rem, 4vh, 4rem);
+}
+
+.analytics-content {
+  min-height: calc(100svh - clamp(4rem, 8vh, 8rem));
+  padding-top: clamp(1rem, 3vh, 2.5rem);
+  scroll-margin-top: 4rem;
+}
+
+@media (max-width: 768px) {
+  .section-wide {
+    width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .section-full {
+    min-height: auto;
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+  .analytics-content { min-height: auto; }
+}
+
+/* ─── Presentation Report Deck ───────────────────────────────────────────── */
+#trend-report .analytics-content {
+  min-height: auto;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}

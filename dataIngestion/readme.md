@@ -1,171 +1,307 @@
-# Social Media Analytics ETL Pipeline
+# Real-Time Social Media Analytics Pipeline
 
-A high-performance, fault-tolerant ETL (Extract, Transform, Load) pipeline built with **Node.js**, **BullMQ**, **Upstash Redis**, and **PostgreSQL**.
-
-The pipeline ingests raw social media data (Twitter/X, Reddit) from a Redis Stream, normalizes diverse data structures into a unified canonical schema, dispatches workloads across four specialized processing queues in parallel, and loads structured records into PostgreSQL.
+A distributed, fault-tolerant ETL pipeline engineered to ingest raw, multi-platform social media streams, normalize polymorphic payloads, execute parallel analytical workloads via a Scatter-Gather pattern, and persist aggregated intelligence into PostgreSQL.
 
 ---
 
-## Architecture & Data Flow
+## Architecture Overview
+
+The system implements a **Hybrid Edge-to-Core** architecture designed to minimize serverless cloud costs while maintaining enterprise-grade resilience:
 
 ```text
-               +----------------------------------+
-               |  Scraper / Upstash Redis Stream  |
-               |        (key: scrape:events)      |
-               +-----------------+----------------+
-                                 |
-                                 | XRANGE (Batch limit: 50) & XDEL
-                                 v
-               +-----------------+----------------+
-               |      producer.js (Orchestrator)  |
-               |   - Polls stream interval        |
-               |   - Normalizes data via map      |
-               |   - Dispatches via addBulk       |
-               +-----------------+----------------+
-                                 |
-         +-----------------------+-----------------------+
-         |                       |                       |
-         v                       v                       v
-+-----------------+     +-----------------+     +-----------------+     +-----------------+
-| SentimentQueue  |     |DemographicQueue |     |   TrendQueue    |     |  NetworkQueue   |
-+--------+--------+     +--------+--------+     +--------+--------+     +--------+--------+
-         |                       |                       |                       |
-         v                       v                       v                       v
-+-----------------+     +-----------------+     +-----------------+     +-----------------+
-| Sentiment Worker|     |Demographic Worker     |  Trend Worker   |     | Network Worker  |
-+--------+--------+     +--------+--------+     +--------+--------+     +--------+--------+
-         |                       |                       |                       |
-         +-----------------------+-----------------------+-----------------------+
-                                 |
-                                 | Parameterized SQL Inserts
-                                 v
-               +-----------------+----------------+
-               |       PostgreSQL Database        |
-               | (sentiments, demographics, etc.) |
-               +----------------------------------+
+[ Scrapers / Producers ]
+          │
+          ▼
+┌─────────────────────────────────┐
+│   Edge: Upstash Redis Stream    │  <-- Ephemeral cloud buffer (scrape:events)
+└─────────────────────────────────┘
+          │
+          │ XRANGE / XDEL (Batch extraction every 60s)
+          ▼
+┌─────────────────────────────────┐
+│       Ingestion Producer        │  <-- Parses & defensive normalization
+└─────────────────────────────────┘
+          │
+          │ FlowProducer.addBulk() (Single local round-trip)
+          ▼
+┌─────────────────────────────────┐
+│    Core: Local Docker Redis     │  <-- High-frequency BullMQ orchestration
+└─────────────────────────────────┘
+          │
+          ├─── Scatter (Parallel Fan-Out)
+          │    ├── SentimentQueue     --> [ Sentiment Worker ]
+          │    ├── DemographicQueue   --> [ Demographic Worker ]
+          │    ├── TrendQueue         --> [ Trend Worker ]
+          │    └── NetworkQueue       --> [ Network Worker ]
+          │
+          └─── Gather (Fan-In)
+               └── DatabaseQueue      --> [ Aggregator Worker ]
+                                                    │
+                                                    ▼
+                                     ┌─────────────────────────────┐
+                                     │     PostgreSQL (NeonDB)     │
+                                     │      (trend_analytics)      │
+                                     └─────────────────────────────┘
 ```
 
----
+### Why This Hybrid Architecture?
 
-## Tech Stack
-
-* **Runtime:** Node.js (v18+)
-* **Message Broker / Stream:** Upstash Redis (Serverless), `ioredis`
-* **Queue Engine:** BullMQ
-* **Database:** PostgreSQL (with `JSONB` support)
+- **Edge Ingestion (Upstash Redis):** Functions strictly as a public ingress point for scrapers. Data is read in bulk and deleted immediately, keeping memory footprint and command counts within free-tier limits.
+- **Core Orchestration (Local Docker Redis):** High-frequency queue state operations (polling, locking, heartbeats, and job trees) execute entirely on a dedicated local Redis instance with Append-Only File (AOF) persistence, incurring zero cloud request fees.
+- **Scatter-Gather (BullMQ Flows):** Dispatches analytical jobs across specialized worker pools in parallel. The parent task wakes only when all child tasks have resolved, preventing partial writes and database race conditions.
 
 ---
 
-## Project Structure
+## Data Structures & Contracts
 
-```text
-├── config.js        # Redis connection factory, PostgreSQL client, keepAlive & TLS setup
-├── queues.js        # BullMQ queue instances sharing an optimized Redis client
-├── normalize.js     # Canonical schema transformation logic (Twitter/X & Reddit)
-├── producer.js      # Orchestrator: polls Redis Stream, normalizes, and enqueues jobs
-└── workers.js       # Background workers consuming queues and persisting to PostgreSQL
+### 1. Ingestion Payload (Upstash Stream)
+
+Raw JSON retrieved from the `scrape:events` stream:
+
+```json
+{
+  "targetTrendLabel": "#AIRevolution",
+  "tweets": [
+    {
+      "postId": "1839201928374",
+      "platform": "twitter",
+      "text": "The pace of open source AI models is unbelievable! #AIRevolution",
+      "impressionCount": 42000,
+      "engagement": { "likes": 1200, "retweets": 340, "replies": 85 }
+    }
+  ],
+  "reddit_posts": [
+    {
+      "postId": "t3_1f8ab9",
+      "platform": "reddit",
+      "title": "Discussion on the latest benchmarks",
+      "text": "Are proprietary models losing their edge? #AIRevolution",
+      "subredditSubscribers": 150000,
+      "engagement": { "score": 950, "comments": 210, "upvotes": 1020, "downvotes": 70 }
+    }
+  ]
+}
 ```
 
----
+### 2. Child Worker Input (`job.data`)
 
-## Database Setup
+The producer normalizes posts into a standardized contract and bundles them under the trend label. All four child workers (Sentiment, Demographic, Trend, Network) receive this identical payload:
 
-Run the following SQL migration on your PostgreSQL instance to create the target tables:
+```json
+{
+  "trend_label": "#AIRevolution",
+  "posts": [
+    {
+      "postId": "1839201928374",
+      "platform": "twitter",
+      "authorHandle": null,
+      "authorReach": null,
+      "text": "The pace of open source AI models is unbelievable! #AIRevolution",
+      "title": null,
+      "hashtags": ["#airevolution"],
+      "publishedAt": "2026-09-14T10:15:30.000Z",
+      "interactions": 1625,
+      "reach": 42000,
+      "engagementRate": 0.03869,
+      "approvalScore": 0.92,
+      "voteConfidence": 3.18
+    },
+    {
+      "postId": "t3_1f8ab9",
+      "platform": "reddit",
+      "authorHandle": null,
+      "authorReach": 150000,
+      "text": "Are proprietary models losing their edge? #AIRevolution",
+      "title": "Discussion on the latest benchmarks",
+      "hashtags": ["#airevolution"],
+      "publishedAt": "2026-09-14T11:00:00.000Z",
+      "interactions": 1160,
+      "reach": 150000,
+      "engagementRate": 0.00773,
+      "approvalScore": 0.935,
+      "voteConfidence": 2.97
+    }
+  ]
+}
+```
+
+### 3. Child Worker Outputs (Return Payloads)
+
+Each specialized worker extracts relevant dimensions from `job.data.posts`, completes its computation, and returns an isolated diagnostic object. A temporary category identifier is attached to guide parent aggregation:
+
+**Sentiment Worker (SentimentQueue)**
+
+```json
+{
+  "category": "sentiment",
+  "result": "positive",
+  "score": 0.91,
+  "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06 }
+}
+```
+
+**Demographic Worker (DemographicQueue)**
+
+```json
+{
+  "category": "demographic",
+  "dominantAgeGroup": "25-34",
+  "primaryRegion": "North America",
+  "languageDistribution": { "en": 0.88, "es": 0.07, "other": 0.05 }
+}
+```
+
+**Trend Dynamics Worker (TrendQueue)**
+
+```json
+{
+  "category": "trend",
+  "velocity": 5.4,
+  "acceleration": 1.2,
+  "isViral": true
+}
+```
+
+**Network Graph Worker (NetworkQueue)**
+
+```json
+{
+  "category": "network",
+  "centralityScore": 0.78,
+  "keyInfluencersCount": 12,
+  "clusterDensity": 0.42
+}
+```
+
+### 4. Aggregator Worker Schema (DatabaseQueue)
+
+The parent worker holds minimal state in `job.data`:
+
+```json
+{
+  "trend_label": "#AIRevolution"
+}
+```
+
+Upon execution, it calls `job.getChildrenValues()` to pull results from all completed child tasks. It strips the operational category tag and compiles the children into a structured dictionary:
+
+```json
+{
+  "sentiment": {
+    "result": "positive",
+    "score": 0.91,
+    "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06 }
+  },
+  "demographic": {
+    "dominantAgeGroup": "25-34",
+    "primaryRegion": "North America",
+    "languageDistribution": { "en": 0.88, "es": 0.07, "other": 0.05 }
+  },
+  "trend": {
+    "velocity": 5.4,
+    "acceleration": 1.2,
+    "isViral": true
+  },
+  "network": {
+    "centralityScore": 0.78,
+    "keyInfluencersCount": 12,
+    "clusterDensity": 0.42
+  }
+}
+```
+
+### 5. PostgreSQL Schema & Storage
+
+**Table Definition (`trend_analytics`)**
 
 ```sql
-CREATE TABLE IF NOT EXISTS sentiments (
+CREATE TABLE IF NOT EXISTS trend_analytics (
     id SERIAL PRIMARY KEY,
-    platform TEXT,
-    post_id TEXT,
-    normalized_data JSONB,
+    trend_label TEXT NOT NULL,
+    combined_data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS demographics (
-    id SERIAL PRIMARY KEY,
-    platform TEXT,
-    post_id TEXT,
-    normalized_data JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+CREATE INDEX IF NOT EXISTS idx_trend_label ON trend_analytics (trend_label);
+```
 
-CREATE TABLE IF NOT EXISTS trends (
-    id SERIAL PRIMARY KEY,
-    platform TEXT,
-    post_id TEXT,
-    normalized_data JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+**Final Persisted Database Record**
 
-CREATE TABLE IF NOT EXISTS networks (
-    id SERIAL PRIMARY KEY,
-    platform TEXT,
-    post_id TEXT,
-    normalized_data JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+```text
+id            │ 1042
+trend_label   │ #AIRevolution
+combined_data │ {"trend": {...}, "network": {...}, "sentiment": {...}, "demographic": {...}}
+created_at    │ 2026-09-14 17:42:10.128492+00
 ```
 
 ---
 
-## Core Components
+## Getting Started
 
-### 1. `config.js`
-Handles connection lifecycle management. Exports `createRedisConnection` (a factory returning dedicated clients for blocking workers) and `sharedRedis` (for lightweight queue/stream operations).
+### 1. Prerequisites
 
-### 2. `queues.js`
-Initializes the four BullMQ queues using the shared Redis client.
+- Node.js 18+
+- Docker & Docker Compose
+- PostgreSQL database (e.g., NeonDB)
+- Upstash Redis database (with Stream support)
 
-### 3. `normalize.js`
-Standardizes platform variations into a single canonical contract. Missing fields are parsed as `null` rather than fabricated values to ensure statistical accuracy downstream.
+### 2. Environment Variables
 
-### 4. `producer.js`
-Polls the Redis stream, normalizes records, and bulk-enqueues them using `Queue.addBulk()` to minimize round-trip commands.
+Create a `.env` file in the root directory:
 
-## Installation & Execution
+```
+# Upstash Redis (Cloud Stream Ingestion)
+UPSTASH_REDIS_URL="rediss://default:your-upstash-key@your-region.upstash.io:6379"
 
-### 1. Install Dependencies
+# Local Docker Redis (BullMQ Processing Core)
+LOCAL_REDIS_URL="redis://127.0.0.1:6379"
 
-```bash
-npm install bullmq ioredis pg
+# PostgreSQL / NeonDB Connection String
+DATABASE_URL="postgresql://user:password@your-endpoint.neon.tech/neondb?sslmode=require"
 ```
 
-### 2. Configure Environment
+### 3. Start Local Queue Broker
 
-Provide your connection strings in `config.js` or via environment variables:
+Spin up the local Redis instance configured with Append-Only File (AOF) persistence:
 
 ```bash
-export UPSTASH_REDIS_URL="rediss://default:your-password@your-endpoint.upstash.io:port"
-export DATABASE_URL="postgres://user:password@localhost:5432/your_database"
+docker compose up -d
 ```
 
-### 3. Run Pipeline Processes
+### 4. Initialize Database Schema
 
-Run the worker consumers and producer orchestrator in separate terminal sessions:
-
-**Terminal 1 (Workers):**
+Execute the schema migration against PostgreSQL:
 
 ```bash
+node migrate.js
+```
+
+### 5. Start Pipeline Processes
+
+Run the consumers and producer in dedicated terminal sessions:
+
+```bash
+# Terminal 1: Run analytical workers & aggregator
 node workers.js
-```
 
-**Terminal 2 (Producer):**
-
-```bash
+# Terminal 2: Run ingestion orchestrator
 node producer.js
 ```
 
 ---
 
-## System Design Considerations
+## Querying JSONB Analytics
 
-1. **Connection Factory Isolation**
-   BullMQ workers use blocking Redis commands (`BRPOPLPUSH` / `BLMOVE`). If multiple workers share a single Redis connection, blocking calls induce race conditions and cause connection resets (`ECONNRESET`). Each worker receives its own dedicated socket via `createRedisConnection()`.
+Because PostgreSQL natively indexes binary JSON, analytical fields can be queried directly without full document scans:
 
-2. **Serverless Cost & Rate-Limit Optimization**
-   * Avoids active polling (`pingInterval`) which burns through serverless Redis request quotas.
-   * Relies on free OS-level TCP keep-alive packets (`keepAlive: 10000`).
-   * Replaces per-job queue additions with `Queue.addBulk()`, drastically reducing round-trip commands.
-
-3. **Data Integrity & Schema Guarantees**
-   Downstream analytics formulas (such as Z-score calculations and velocity windows) depend on strictly valid distributions. Missing fields default to `null` rather than dummy zero values, to avoid skewing downstream analytical models.
+```sql
+-- Find viral trends with strong positive sentiment
+SELECT 
+    trend_label,
+    (combined_data->'trend'->>'velocity')::numeric AS velocity,
+    (combined_data->'sentiment'->>'score')::numeric AS sentiment_score
+FROM trend_analytics
+WHERE (combined_data->'trend'->>'isViral')::boolean = true
+  AND (combined_data->'sentiment'->>'score')::numeric > 0.85
+ORDER BY velocity DESC;
+```

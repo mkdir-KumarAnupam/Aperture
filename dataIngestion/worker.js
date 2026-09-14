@@ -1,142 +1,145 @@
 const { Worker } = require("bullmq");
-// const { redis, pgClient } = require('./config');
-const { createRedisConnection } = require("./config");
-const { writeFile } = require("node:fs/promises");
-const { analyzeBatch } = require("./sentiment/src/pipeline");
+const { createBullMQConnection, localSharedRedis, pgClient } = require("./config");
+const { analyzeTrend } = require("./trendAnalysis");
+const { recordTrendStats, enrichWithGlobalRanking } = require("./trendGlobalStats");
 
-// Helper function to simulate a heavy processing task (like calling an AI model)
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const workerOpts = { 
+    connection: createBullMQConnection(),
+    concurrency: 5 // Allows each worker to process 5 jobs at exactly the same time
+};
 
-console.log("👷 Workers are online and listening...");
+console.log("👷 Local Workers are online and listening...");
 
 // ==========================================
-// WORKER 1: SENTIMENT ANALYSIS
+// 1. CHILD WORKERS (The "Scatter")
 // ==========================================
-const sentimentWorker = new Worker(
-  "SentimentQueue",
-  async (job) => {
+const sentimentWorker = new Worker("SentimentQueue", async (job) => {
+    await delay(1000); 
+    // -> Ashutosh code will go here and he will return the data here
+
     const data = job.data;
-    console.log(`[Sentiment] Processing ${data.targetTrendLabel}...`);
+    console.log(job.data);
 
-    //     // Simulate 2 seconds of heavy processing
-    //     async function main() {
-    //       console.log(`Analyzing ${data.length} posts...\n`);
-    //       const results = await analyzeBatch(data);
+    return { category: "sentiment", result: "positive", score: 0.95 }; 
+}, workerOpts);
 
-    //       console.log("\nSaved results to results.json");
+const demographicWorker = new Worker("DemographicQueue", async (job) => {
+    await delay(1000); 
+    // -> Ashutosh code will go here and he will return the data here
 
-    //       const tierCounts = results.reduce((acc, r) => {
-    //         acc[r.tier] = (acc[r.tier] || 0) + 1;
-    //         return acc;
-    //       }, {});
-    //       console.log("Tier usage:", tierCounts);
-    //     }
+    return { category: "demographic", topAge: "18-24", topRegion: "India" };
+}, workerOpts);
 
-    await main().catch((err) => {
-      console.error("Pipeline failed:", err);
-    });
-    // Insert the data into PostgreSQL
-    // We use $1 and $2 to strictly prevent SQL injection attacks
-    // const query = `INSERT INTO sentiments (trend_label, raw_data) VALUES ($1, $2)`;
-    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
+const trendWorker = new Worker("TrendQueue", async (job) => {
+    // 1. Compute local trend metrics
+    const result = analyzeTrend(job.data);
 
-    console.log("Sentiment worker completed his work ...");
-    console.log(data);
+    // 2. Record in global Redis registry & enrich with cross-trend ranking
+    await recordTrendStats(localSharedRedis, result);
+    const enriched = await enrichWithGlobalRanking(localSharedRedis, result);
 
-    // Returning an object tells BullMQ the job was successfully completed
-    return { status: "success" };
-  },
-  { connection: createRedisConnection() },
-);
+    const rank = enriched.globalRanking;
+    console.log(`📈 [Trend] ${enriched.name}: score=${enriched.trendScore} tier=${enriched.influence.viralityTier} rank=#${rank.leaderboardPosition}/${rank.totalTrackedTrends} (top ${100 - rank.percentile}%) ${rank.tierMovement}`);
 
-// ==========================================
-// WORKER 2: DEMOGRAPHIC ANALYSIS
-// ==========================================
-const demographicWorker = new Worker(
-  "DemographicQueue",
-  async (job) => {
-    const data = job.data;
-    console.log(`[Demographic] Processing ${data.targetTrendLabel}...`);
+    return enriched;
+// the above enriched return the data like given below
+//     {
+//   category: "trend",
+//   id: "india-election-results",
+//   name: "India Election Results",
+//   trendScore: 72,
+//   platformActivity: {
+//     twitter: { posts: 45, interactions: 12800, avgEngagement: 0.032 },
+//     reddit:  { posts: 12, interactions: 3400,  avgEngagement: 0.008 }
+//   },
+//   totalMentions: "57",
+//   approximateReach: "2.5M",
+//   growthPercent: "+82%",
+//   peakGrowth: "+126%",
+//   peakDate: "Sep 14",
+//   fastestPlatform: "twitter",
+//   lifecycle: {
+//     "24h": [{ date: "Sep 14 03:00", interactions: 350, posts: 12 }, ...],
+//     "7d":  [{ date: "Sep 10 12:00", interactions: 800, posts: 28 }, ...],
+//     "30d": [{ date: "Aug 20",       interactions: 1200, posts: 45 }, ...]
+//   },
+//   influence: {
+//     avgInfluence: 2.8,
+//     viralityTier: "viral",
+//     viralityScore: 0.72,
+//     topInfluencers: [
+//       { authorHandle: "@example", platform: "twitter", influence: 5.2, interactions: 3400, reach: 150000 }
+//     ]
+//   },
+//   posts: [{ postId, platform, authorHandle, text, publishedAt, interactions, ... }],
 
+
+//   globalRanking: {
+//     percentile: 92,                // "better than 92% of all trends"
+//     leaderboardPosition: 3,        // #3 out of all tracked trends
+//     totalTrackedTrends: 47,        // total trends in Redis registry
+//     scoreDelta: 12,                // score change since last analysis (+12)
+//     tierMovement: "rising",        // "rising" | "falling" | "stable"
+//     scoreHistory: [                // last 10 snapshots (for sparkline)
+//       { score: 72, tier: "viral",    timestamp: 1726333574000 },
+//       { score: 60, tier: "trending", timestamp: 1726329974000 },
+//       ...
+//     ]
+//   },
+
+//   _windows: { ... },
+//   _overall: { ... }
+// }
+
+}, workerOpts);
+
+const networkWorker = new Worker("NetworkQueue", async (job) => {
     await delay(1000);
-    //-> Ashutosh code of the demographic worker analysis will go here.
+    // -> Ashutosh code will go here and he will return the data here
 
-    // const query = `INSERT INTO demographics (trend_label, raw_data) VALUES ($1, $2)`;
-    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
-    console.log("Demographic worker completed his work ...");
-    console.log(data);
+    return { category: "network", keyInfluencers: 3 };
+}, workerOpts);
 
+// ==========================================
+// 2. PARENT WORKER (The "Gather")
+// ==========================================
+const databaseWorker = new Worker("DatabaseQueue", async (job) => {
+    const trendLabel = job.data.trend_label;
+    console.log(`\n💾 [Database] Gathering results for ${trendLabel}...`);
+
+    // A. Fetch returned objects from the 4 child workers
+    const childResults = await job.getChildrenValues();
+    const rawValues = Object.values(childResults);
+
+    // B. Rebuild dict & remove 'category' key cleanly
+    const structuredAnalytics = {};
+    for (const data of rawValues) {
+        const { category, ...cleanData } = data;
+        structuredAnalytics[category] = cleanData;
+    }
+
+    console.table(structuredAnalytics);
+
+    // C. Save to PostgreSQL
+    // Final DB shape: trend_label (Text) | combined_data (JSONB)
+    // const query = `INSERT INTO trend_analytics (trend_label, combined_data) VALUES ($1, $2)`;
+    // await pgClient.query(query, [trendLabel, JSON.stringify(structuredAnalytics)]);
+
+    console.log(`✅ [Database] Successfully saved all analytics for ${trendLabel}!\n`);
+    console.log()
     return { status: "success" };
-  },
-  { connection: createRedisConnection() },
-);
+
+}, workerOpts);
+
 
 // ==========================================
-// WORKER 3: TREND ANALYSIS
+// 3. ERROR LOGGING
 // ==========================================
-const trendWorker = new Worker(
-  "TrendQueue",
-  async (job) => {
-    const data = job.data;
-    console.log(`[Trend] Processing ${data.targetTrendLabel}...`);
-
-    await delay(1000);
-    // -> Ashutosh code will go here of trend Analysis
-
-    // const query = `INSERT INTO trends (trend_label, raw_data) VALUES ($1, $2)`;
-    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
-
-    console.log("Trend worker completed his work ...");
-    console.log(data);
-
-    return { status: "success" };
-  },
-  { connection: createRedisConnection() },
-);
-
-// ==========================================
-// WORKER 4: NETWORK ANALYSIS
-// ==========================================
-const networkWorker = new Worker(
-  "NetworkQueue",
-  async (job) => {
-    const data = job.data;
-    console.log(`[Network] Processing ${data.targetTrendLabel}...`);
-
-    await delay(1000);
-    // -> Ashustosh code will go here of network analysis
-
-    // const query = `INSERT INTO networks (trend_label, raw_data) VALUES ($1, $2)`;
-    // await pgClient.query(query, [data.targetTrendLabel, JSON.stringify(data)]);
-
-    console.log("Netowork worker completed his work ...");
-    console.log(data);
-
-    return { status: "success" };
-  },
-  { connection: createRedisConnection() },
-);
-
-// ==========================================
-// EVENT LISTENERS (For Logging)
-// ==========================================
-// We loop through all workers and attach listeners so we can see
-// what is happening in the terminal in real-time.
-const workers = [
-  sentimentWorker,
-  demographicWorker,
-  trendWorker,
-  networkWorker,
-];
+const workers = [sentimentWorker, demographicWorker, trendWorker, networkWorker, databaseWorker];
 
 workers.forEach((worker) => {
-  // Fired when a job finishes and returns a successful status
-  worker.on("completed", (job) => {
-    console.log(`✅ [${worker.name}] Finished job ${job.id}`);
-  });
-
-  // Fired if the Postgres insert fails or the process crashes
-  worker.on("failed", (job, err) => {
-    console.error(`❌ [${worker.name}] Failed job ${job.id}:`, err.message);
-  });
+    worker.on("failed", (job, err) => {
+        console.error(`❌ [${worker.name}] Failed job ${job?.id}:`, err.message);
+    });
 });

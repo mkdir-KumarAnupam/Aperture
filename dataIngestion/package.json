@@ -20,6 +20,8 @@
   "packageManager": "pnpm@11.23.0",
   "dependencies": {
     "bullmq": "^6.3.4",
-    "ioredis": "^6.0.0"
+    "dotenv": "^17.4.2",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0"
   }
 }
