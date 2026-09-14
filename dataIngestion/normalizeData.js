@@ -167,7 +167,6 @@ function normalizeReddit(post) {
   // no more silent 0.5 default — if there's truly no signal, it's null.
 
   return {
-    trend_label : post.trend_label,
     postId: post.postId ?? null,
     platform: "reddit",
     conversationId: post.postId ?? null,
@@ -217,7 +216,6 @@ function parseRedditTimestamp(ts) {
 function normalizeUnknown(post, platform) {
   const observedAt = toIsoOrNull(post.observedAt);
   return {
-    trend_label : post.trend_label,
     postId: post.postId ?? null,
     platform: platform, // null if truly undetected, "telegram" if just not built yet
     conversationId: post.conversationId ?? post.postId ?? null,

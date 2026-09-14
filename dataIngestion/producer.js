@@ -44,19 +44,14 @@ async function fetchBulkStreamData(batchLimit = 10) {
       try {
         // Safely attempt to parse the JSON string into a JS object
         const data = JSON.parse(rawJsonString);
-        let targetTrendLabel = data.targetTrendLabel;
-        const tweets = data.tweets?.map((temp) => {
-          temp.trend_label = targetTrendLabel;
-          normalizeData(temp);
-          return temp;
-        });
-        const redditPosts = data.reddit_posts?.map((temp) => {
-          temp.trend_label = targetTrendLabel;
-          normalizeData(temp);
-          return temp;
-        });
+        let targetTrendLabel = data?.targetTrendLabel || "";
 
-        parsedDataArray.push(...tweets, ...redditPosts);
+        const tweets = data.tweets?.map(normalizeData) || [];
+        const redditPosts = data.reddit_posts?.map(normalizeData) || [];
+        parsedDataArray.push({
+          trend_label: targetTrendLabel,
+          posts: [...tweets, ...redditPosts],
+        });
 
         // Keep track of this ID so we can delete it from the stream later
         idsToDelete.push(entryId);
@@ -67,7 +62,6 @@ async function fetchBulkStreamData(batchLimit = 10) {
       }
     }
   }
-
   // 3. CLEANUP: Delete the entries we just handled so we don't process them again next minute
   // if (idsToDelete.length > 0) {
   //     await redis.xdel('scrape:events', ...idsToDelete);

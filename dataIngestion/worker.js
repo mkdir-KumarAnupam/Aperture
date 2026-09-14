@@ -18,24 +18,22 @@ const sentimentWorker = new Worker(
     const data = job.data;
     console.log(`[Sentiment] Processing ${data.targetTrendLabel}...`);
 
-    // Simulate 2 seconds of heavy processing
-    async function main() {
-      console.log(`Analyzing ${data.length} posts...\n`);
-      const results = await analyzeBatch(data);
+    //     // Simulate 2 seconds of heavy processing
+    //     async function main() {
+    //       console.log(`Analyzing ${data.length} posts...\n`);
+    //       const results = await analyzeBatch(data);
 
-      await writeFile("results.json", JSON.stringify(results, null, 2));
-      console.log("\nSaved results to results.json");
+    //       console.log("\nSaved results to results.json");
 
-      const tierCounts = results.reduce((acc, r) => {
-        acc[r.tier] = (acc[r.tier] || 0) + 1;
-        return acc;
-      }, {});
-      console.log("Tier usage:", tierCounts);
-    }
+    //       const tierCounts = results.reduce((acc, r) => {
+    //         acc[r.tier] = (acc[r.tier] || 0) + 1;
+    //         return acc;
+    //       }, {});
+    //       console.log("Tier usage:", tierCounts);
+    //     }
 
     await main().catch((err) => {
       console.error("Pipeline failed:", err);
-
     });
     // Insert the data into PostgreSQL
     // We use $1 and $2 to strictly prevent SQL injection attacks
