@@ -2,6 +2,7 @@ const { Worker } = require("bullmq");
 const { createBullMQConnection, localSharedRedis, pgClient } = require("./config");
 const { analyzeTrend } = require("./trendAnalysis");
 const { recordTrendStats, enrichWithGlobalRanking } = require("./trendGlobalStats");
+const { analyzeNetwork } = require("./networkAnalysis");
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const workerOpts = { 
@@ -95,10 +96,45 @@ const trendWorker = new Worker("TrendQueue", async (job) => {
 }, workerOpts);
 
 const networkWorker = new Worker("NetworkQueue", async (job) => {
-    await delay(1000);
-    // -> Ashutosh code will go here and he will return the data here
+    const result = analyzeNetwork(job.data);
+    console.log(`🕸️ [Network] ${job.data.trend_label}: ${result.nodes.length} nodes, ${result.edges.length} edges, top=${result.topInfluencers[0]?.label ?? "none"}`);
+    return result;
+// the result contains object of type given below
+//     {
+//   category: "network", 
+  
+//   nodes: [
+//     {
+//       id: "u123",
+//       label: "@political_analyst", 
+//       platform: "twitter",
+//       community: "blue",          // The color group for frontend rendering
+//       influence: 80,              // 0-100 normalized score for node size
+//       type: "account"             // "account" or "community"
+//     },
+//     // ... plus "community" nodes that summarize hashtag clusters
+//   ],
+  
+//   edges: [
+//     {
+//       source: "u123",
+//       target: "u456",
+//       strength: 0.89              // 0.0-1.0 (combined strength of their interactions)
+//     }
+//   ],
+  
+//   topInfluencers: [
+//     {
+//       id: "u123",
+//       label: "@political_analyst",
+//       platform: "twitter",
+//       influence: 80,
+//       tier: "high"                // "high" (≥70), "medium" (≥40), or "low"
+//     }
+//   ]
+// }
 
-    return { category: "network", keyInfluencers: 3 };
+
 }, workerOpts);
 
 // ==========================================
