@@ -12,6 +12,7 @@
 //   - No hosted API calls
 //   - Batch classification for efficient processing
 //   - Provide confidence scores to the two-tier orchestrator
+//   - Safely handle long social-media posts
 //
 // Pipeline:
 //
@@ -31,6 +32,22 @@
 //
 // This module does NOT modify canonical events.
 // It only receives text and returns derived sentiment predictions.
+//
+// IMPORTANT:
+//
+// RoBERTa has a finite maximum sequence length. Social-media content,
+// scraped text, quoted posts, Telegram messages, Reddit content, etc.
+// can occasionally contain thousands of tokens.
+//
+// Therefore every inference explicitly uses:
+//   truncation: true
+//   max_length: 256
+//
+// This prevents ONNX errors such as:
+//
+//   invalid expand shape
+//   Name:'/roberta/Expand'
+//
 // ============================================================================
 
 import { pipeline } from "@xenova/transformers";
@@ -42,7 +59,18 @@ import { pipeline } from "@xenova/transformers";
 const MODEL_NAME =
   "Xenova/twitter-roberta-base-sentiment-latest";
 
+// Number of texts sent to the model at once.
 const DEFAULT_BATCH_SIZE = 8;
+
+// Maximum number of tokens processed per text.
+//
+// 256 is intentionally used instead of 512 because this is social-media
+// sentiment analysis. Extremely long content is usually unnecessary for
+// polarity classification and creates unnecessary CPU/memory pressure.
+//
+// If you later want to change this, keep it within the model's supported
+// sequence length.
+const MAX_LENGTH = 256;
 
 // ============================================================================
 // Lazy Model Loading
@@ -82,6 +110,10 @@ function validateText(text) {
   );
 }
 
+// ============================================================================
+// Normalize classifier output
+// ============================================================================
+
 function normalizeResult(result) {
   if (!result || typeof result !== "object") {
     throw new Error(
@@ -103,6 +135,26 @@ function normalizeResult(result) {
     score: result.score,
   };
 }
+
+// ============================================================================
+// Classifier Options
+// ============================================================================
+//
+// Keep these options in one place so both single and batch inference behave
+// consistently.
+//
+// `truncation: true` is critical.
+//
+// Without it, a scraped post can produce thousands of tokens and cause
+// ONNX Runtime to fail inside the RoBERTa model.
+//
+// `max_length: 256` ensures every input stays within a safe size.
+// ============================================================================
+
+const CLASSIFIER_OPTIONS = {
+  truncation: true,
+  max_length: MAX_LENGTH,
+};
 
 // ============================================================================
 // Single Classification
@@ -127,8 +179,10 @@ export async function classifyTier1(text) {
 
   const classifier = await getClassifier();
 
-  const [result] =
-    await classifier(text);
+  const [result] = await classifier(
+    text,
+    CLASSIFIER_OPTIONS
+  );
 
   return normalizeResult(result);
 }
@@ -141,6 +195,8 @@ export async function classifyTier1(text) {
  * Classify multiple texts using the local transformer.
  *
  * The input is processed in chunks to avoid excessive CPU/memory usage.
+ *
+ * Each text is also explicitly truncated to MAX_LENGTH tokens.
  *
  * @param {string[]} texts
  *
@@ -158,6 +214,15 @@ export async function classifyTier1Batch(texts) {
 
   if (texts.length === 0) {
     return [];
+  }
+
+  // Validate the complete input before loading/running the model.
+  for (let i = 0; i < texts.length; i++) {
+    if (!validateText(texts[i])) {
+      throw new Error(
+        `Tier 1 received empty or invalid text at index ${i}.`
+      );
+    }
   }
 
   const classifier =
@@ -183,6 +248,10 @@ export async function classifyTier1Batch(texts) {
     `in batches of ${batchSize}.`
   );
 
+  console.log(
+    `[Tier 1] Maximum sequence length: ${MAX_LENGTH} tokens.`
+  );
+
   for (
     let i = 0;
     i < texts.length;
@@ -191,46 +260,61 @@ export async function classifyTier1Batch(texts) {
     const chunk =
       texts.slice(i, i + batchSize);
 
-    /*
-     * Empty/invalid text should not normally reach this function because
-     * the sentiment worker filters event.content.text before calling it.
-     *
-     * We still handle it here so this module remains safe when used
-     * independently.
-     */
-    const validTexts = chunk.map(
-      validateText
-    );
-
-    if (
-      validTexts.some(
-        (valid) => !valid
-      )
-    ) {
-      throw new Error(
-        `Tier 1 received empty or invalid text ` +
-        `in batch starting at index ${i}.`
-      );
-    }
+    // ------------------------------------------------------------------------
+    // Run inference
+    // ------------------------------------------------------------------------
+    //
+    // IMPORTANT:
+    //
+    // Pass truncation/max_length explicitly.
+    //
+    // Previously:
+    //
+    //   classifier(chunk)
+    //
+    // could create inputs such as:
+    //
+    //   [8, 1118]
+    //   [7, 4306]
+    //
+    // which exceeds the RoBERTa model's supported sequence length.
+    //
+    // ------------------------------------------------------------------------
 
     const chunkResults =
-      await classifier(chunk);
+      await classifier(
+        chunk,
+        CLASSIFIER_OPTIONS
+      );
+
+    // ------------------------------------------------------------------------
+    // Validate model response
+    // ------------------------------------------------------------------------
 
     if (
       !Array.isArray(chunkResults) ||
       chunkResults.length !== chunk.length
     ) {
       throw new Error(
-        `Tier 1 returned ${chunkResults?.length ?? 0} ` +
-        `results for ${chunk.length} texts.`
+        `Tier 1 returned ` +
+        `${chunkResults?.length ?? 0} results ` +
+        `for ${chunk.length} texts.`
       );
     }
+
+    // ------------------------------------------------------------------------
+    // Normalize results
+    // ------------------------------------------------------------------------
 
     results.push(
       ...chunkResults.map(
         normalizeResult
       )
     );
+
+    // ------------------------------------------------------------------------
+    // Progress
+    // ------------------------------------------------------------------------
 
     console.log(
       `[Tier 1] Processed ` +

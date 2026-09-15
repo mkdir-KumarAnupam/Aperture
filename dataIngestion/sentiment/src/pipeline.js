@@ -32,14 +32,8 @@
 // It must NOT mutate the canonical event or replace the raw collection.
 // ============================================================================
 
-import {
-  classifyTier1,
-  classifyTier1Batch,
-} from "./tier1.js";
-
-import {
-  classifyTier2,
-} from "./tier2.js";
+import { classifyTier1, classifyTier1Batch } from "./tier1.js";
+import { classifyTier2 } from "./tier2.js";
 
 // ============================================================================
 // Configuration

@@ -16,7 +16,6 @@
  *              │               │                │
  *              └───────────────┼────────────────┘
  *                              │
- *                              │
  *                              ▼
  *                         DatabaseQueue
  *
@@ -55,10 +54,6 @@ const {
 } = require("./config");
 
 const {
-  analyzeBatch,
-} = require("./sentimentAnalysis");
-
-const {
   analyzeTrend,
 } = require("./trendAnalysis");
 
@@ -88,6 +83,46 @@ const WORKER_OPTIONS = {
    */
   concurrency: 5,
 };
+
+// ============================================================================
+// Sentiment Pipeline Loader
+// ============================================================================
+//
+// sentiment/src/pipeline.js is an ES module while this worker uses CommonJS.
+//
+// We therefore load the sentiment pipeline using dynamic import.
+//
+// IMPORTANT:
+// The workers are created only AFTER this function succeeds.
+// This guarantees analyzeBatch exists before SentimentQueue can process jobs.
+// ============================================================================
+
+let analyzeBatch = null;
+
+async function loadSentimentPipeline() {
+  console.log(
+    "[Startup] Loading sentiment pipeline..."
+  );
+
+  const sentimentPipeline =
+    await import("./sentiment/src/pipeline.js");
+
+  if (
+    !sentimentPipeline ||
+    typeof sentimentPipeline.analyzeBatch !== "function"
+  ) {
+    throw new Error(
+      "Sentiment pipeline does not export analyzeBatch()."
+    );
+  }
+
+  analyzeBatch =
+    sentimentPipeline.analyzeBatch;
+
+  console.log(
+    "[Startup] Sentiment pipeline loaded successfully."
+  );
+}
 
 // ============================================================================
 // Logging
@@ -339,893 +374,850 @@ function getPlatformCounts(events) {
 // 1. SENTIMENT WORKER
 // ============================================================================
 
-const sentimentWorker = new Worker(
-  "SentimentQueue",
-
-  async (job) => {
-    const data =
-      getCanonicalData(job);
-
-    validateCollection(data);
-
-    const trendLabel =
-      getTrendLabel(data);
-
-    log(
-      "Sentiment",
-      `Processing ${data.events.length} events | ` +
-      `Trend=${trendLabel} | ` +
-      `Run=${data.collection.collectionId}`
+function createSentimentWorker() {
+  if (typeof analyzeBatch !== "function") {
+    throw new Error(
+      "Sentiment pipeline has not been loaded."
     );
+  }
 
-    // ------------------------------------------------------------------------
-    // Extract text from canonical events
-    // ------------------------------------------------------------------------
-    //
-    // The canonical event remains the source of truth.
-    //
-    // Sentiment analysis receives only the text required by the ML pipeline.
-    //
-    // We keep the original event indexes so that the returned predictions
-    // can later be associated with their canonical event IDs and timestamps.
-    // ------------------------------------------------------------------------
+  return new Worker(
+    "SentimentQueue",
 
-    const textEntries = [];
+    async (job) => {
+      const data =
+        getCanonicalData(job);
 
-    for (
-      let index = 0;
-      index < data.events.length;
-      index++
-    ) {
-      const event =
-        data.events[index];
+      validateCollection(data);
 
-      const text =
-        event.content?.text;
+      const trendLabel =
+        getTrendLabel(data);
 
-      if (
-        typeof text !== "string" ||
-        !text.trim()
+      log(
+        "Sentiment",
+        `Processing ${data.events.length} events | ` +
+        `Trend=${trendLabel} | ` +
+        `Run=${data.collection.collectionId}`
+      );
+
+      // ----------------------------------------------------------------------
+      // Extract text from canonical events
+      // ----------------------------------------------------------------------
+
+      const textEntries = [];
+
+      for (
+        let index = 0;
+        index < data.events.length;
+        index++
       ) {
-        continue;
+        const event =
+          data.events[index];
+
+        const text =
+          event.content?.text;
+
+        if (
+          typeof text !== "string" ||
+          !text.trim()
+        ) {
+          continue;
+        }
+
+        textEntries.push({
+          eventIndex: index,
+          eventId: event.eventId,
+          publishedAt:
+            event.time?.publishedAt ?? null,
+          platform: event.platform,
+          text,
+        });
       }
 
-      textEntries.push({
-        eventIndex: index,
-        eventId: event.eventId,
-        publishedAt:
-          event.time?.publishedAt ?? null,
-        platform: event.platform,
-        text,
-      });
-    }
+      log(
+        "Sentiment",
+        `Found ${textEntries.length}/${data.events.length} ` +
+        `events with analyzable text.`
+      );
 
-    log(
-      "Sentiment",
-      `Found ${textEntries.length}/${data.events.length} ` +
-      `events with analyzable text.`
-    );
+      // ----------------------------------------------------------------------
+      // No analyzable text
+      // ----------------------------------------------------------------------
 
-    // ------------------------------------------------------------------------
-    // No analyzable text
-    // ------------------------------------------------------------------------
+      if (textEntries.length === 0) {
+        return {
+          category: "sentiment",
 
-    if (textEntries.length === 0) {
-      return {
+          eventCount:
+            data.events.length,
+
+          analyzedCount: 0,
+
+          unanalyzedCount:
+            data.events.length,
+
+          platformCounts:
+            getPlatformCounts(data.events),
+
+          results: [],
+
+          summary: {
+            positive: 0,
+            neutral: 0,
+            negative: 0,
+          },
+
+          emotions: {},
+
+          stance: {
+            supportive: 0,
+            against: 0,
+            neutral: 0,
+          },
+
+          sarcasm: {
+            detected: 0,
+            notDetected: 0,
+          },
+
+          tierUsage: {
+            tier1: 0,
+            tier2: 0,
+          },
+        };
+      }
+
+      // ----------------------------------------------------------------------
+      // Two-tier sentiment pipeline
+      // ----------------------------------------------------------------------
+
+      const predictions =
+        await analyzeBatch(
+          textEntries.map(
+            (entry) => entry.text
+          )
+        );
+
+      if (
+        !Array.isArray(predictions) ||
+        predictions.length !==
+        textEntries.length
+      ) {
+        throw new Error(
+          `Sentiment pipeline returned ` +
+          `${predictions?.length ?? 0} results ` +
+          `for ${textEntries.length} events.`
+        );
+      }
+
+      // ----------------------------------------------------------------------
+      // Attach predictions to canonical event identity
+      // ----------------------------------------------------------------------
+
+      const results = [];
+
+      for (
+        let i = 0;
+        i < textEntries.length;
+        i++
+      ) {
+        const entry =
+          textEntries[i];
+
+        const prediction =
+          predictions[i];
+
+        if (
+          !prediction ||
+          typeof prediction !== "object"
+        ) {
+          continue;
+        }
+
+        results.push({
+          eventId:
+            entry.eventId,
+
+          platform:
+            entry.platform,
+
+          publishedAt:
+            entry.publishedAt,
+
+          polarity:
+            prediction.polarity ?? {
+              label: null,
+              confidence: null,
+            },
+
+          emotions:
+            Array.isArray(
+              prediction.emotions
+            )
+              ? prediction.emotions
+              : [],
+
+          stance:
+            prediction.stance ?? {
+              label: null,
+              confidence: null,
+            },
+
+          sarcasm:
+            prediction.sarcasm ?? {
+              detected: null,
+              confidence: null,
+            },
+
+          tier:
+            prediction.tier ?? null,
+
+          reason:
+            prediction.reason ?? null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // Aggregate analytics
+      // ----------------------------------------------------------------------
+
+      const summary = {
+        positive: 0,
+        neutral: 0,
+        negative: 0,
+      };
+
+      const emotions = {};
+
+      const stance = {
+        supportive: 0,
+        against: 0,
+        neutral: 0,
+      };
+
+      const sarcasm = {
+        detected: 0,
+        notDetected: 0,
+      };
+
+      const tierUsage = {
+        tier1: 0,
+        tier2: 0,
+      };
+
+      for (const result of results) {
+        // Polarity
+
+        const polarity =
+          result.polarity?.label;
+
+        if (
+          Object.prototype.hasOwnProperty.call(
+            summary,
+            polarity
+          )
+        ) {
+          summary[polarity]++;
+        }
+
+        // Emotions
+
+        if (
+          Array.isArray(
+            result.emotions
+          )
+        ) {
+          for (
+            const emotion of result.emotions
+          ) {
+            if (
+              !emotion?.label
+            ) {
+              continue;
+            }
+
+            emotions[emotion.label] =
+              (emotions[emotion.label] || 0) +
+              1;
+          }
+        }
+
+        // Stance
+
+        const stanceLabel =
+          result.stance?.label;
+
+        if (
+          Object.prototype.hasOwnProperty.call(
+            stance,
+            stanceLabel
+          )
+        ) {
+          stance[stanceLabel]++;
+        }
+
+        // Sarcasm
+
+        if (
+          result.sarcasm?.detected ===
+          true
+        ) {
+          sarcasm.detected++;
+        } else if (
+          result.sarcasm?.detected ===
+          false
+        ) {
+          sarcasm.notDetected++;
+        }
+
+        // Tier usage
+
+        if (
+          result.tier === 1
+        ) {
+          tierUsage.tier1++;
+        } else if (
+          result.tier === 2
+        ) {
+          tierUsage.tier2++;
+        }
+      }
+
+      // ----------------------------------------------------------------------
+      // Platform summary
+      // ----------------------------------------------------------------------
+
+      const platformCounts =
+        getPlatformCounts(
+          data.events
+        );
+
+      // ----------------------------------------------------------------------
+      // Final derived sentiment result
+      // ----------------------------------------------------------------------
+
+      const result = {
         category: "sentiment",
 
         eventCount:
           data.events.length,
 
-        analyzedCount: 0,
+        analyzedCount:
+          results.length,
 
-        results: [],
+        unanalyzedCount:
+          data.events.length -
+          results.length,
 
-        summary: {
-          positive: 0,
-          neutral: 0,
-          negative: 0,
-        },
+        platformCounts,
 
-        emotions: {},
+        summary,
 
-        stance: {
-          supportive: 0,
-          against: 0,
-          neutral: 0,
-        },
+        emotions,
 
-        sarcasm: {
-          detected: 0,
-          notDetected: 0,
-        },
+        stance,
 
-        tierUsage: {
-          tier1: 0,
-          tier2: 0,
-        },
+        sarcasm,
+
+        tierUsage,
+
+        results,
       };
-    }
 
-    // ------------------------------------------------------------------------
-    // Two-tier sentiment pipeline
-    // ------------------------------------------------------------------------
-    //
-    // Tier 1:
-    //   Local Twitter-RoBERTa classifier.
-    //
-    // Tier 2:
-    //   Hosted LLM for uncertain Tier 1 classifications.
-    //
-    // analyzeBatch() handles the escalation logic.
-    // ------------------------------------------------------------------------
-
-    const predictions =
-      await analyzeBatch(
-        textEntries.map(
-          (entry) => entry.text
-        )
+      success(
+        "Sentiment",
+        `Processed ${results.length}/${data.events.length} events | ` +
+        `Tier1=${tierUsage.tier1} | ` +
+        `Tier2=${tierUsage.tier2}`
       );
 
-    if (
-      !Array.isArray(predictions) ||
-      predictions.length !==
-      textEntries.length
-    ) {
-      throw new Error(
-        `Sentiment pipeline returned ` +
-        `${predictions?.length ?? 0} results ` +
-        `for ${textEntries.length} events.`
-      );
-    }
+      return result;
+    },
 
-    // ------------------------------------------------------------------------
-    // Attach predictions to canonical event identity
-    // ------------------------------------------------------------------------
-    //
-    // We do NOT modify data.events.
-    //
-    // This creates a separate derived analytics representation.
-    // ------------------------------------------------------------------------
-
-    const results = [];
-
-    for (
-      let i = 0;
-      i < textEntries.length;
-      i++
-    ) {
-      const entry =
-        textEntries[i];
-
-      const prediction =
-        predictions[i];
-
-      if (
-        !prediction ||
-        typeof prediction !== "object"
-      ) {
-        continue;
-      }
-
-      results.push({
-        eventId: entry.eventId,
-
-        platform:
-          entry.platform,
-
-        publishedAt:
-          entry.publishedAt,
-
-        polarity:
-          prediction.polarity ?? {
-            label: null,
-            confidence: null,
-          },
-
-        emotions:
-          Array.isArray(
-            prediction.emotions
-          )
-            ? prediction.emotions
-            : [],
-
-        stance:
-          prediction.stance ?? {
-            label: null,
-            confidence: null,
-          },
-
-        sarcasm:
-          prediction.sarcasm ?? {
-            detected: null,
-            confidence: null,
-          },
-
-        tier:
-          prediction.tier ?? null,
-
-        reason:
-          prediction.reason ?? null,
-      });
-    }
-
-    // ------------------------------------------------------------------------
-    // Aggregate analytics
-    // ------------------------------------------------------------------------
-
-    const summary = {
-      positive: 0,
-      neutral: 0,
-      negative: 0,
-    };
-
-    const emotions = {};
-
-    const stance = {
-      supportive: 0,
-      against: 0,
-      neutral: 0,
-    };
-
-    const sarcasm = {
-      detected: 0,
-      notDetected: 0,
-    };
-
-    const tierUsage = {
-      tier1: 0,
-      tier2: 0,
-    };
-
-    for (const result of results) {
-      // ----------------------------------------------------------------------
-      // Polarity
-      // ----------------------------------------------------------------------
-
-      const polarity =
-        result.polarity?.label;
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          summary,
-          polarity
-        )
-      ) {
-        summary[polarity]++;
-      }
-
-      // ----------------------------------------------------------------------
-      // Emotions
-      // ----------------------------------------------------------------------
-
-      if (
-        Array.isArray(
-          result.emotions
-        )
-      ) {
-        for (
-          const emotion of result.emotions
-        ) {
-          if (
-            !emotion?.label
-          ) {
-            continue;
-          }
-
-          emotions[emotion.label] =
-            (emotions[emotion.label] || 0) +
-            1;
-        }
-      }
-
-      // ----------------------------------------------------------------------
-      // Stance
-      // ----------------------------------------------------------------------
-
-      const stanceLabel =
-        result.stance?.label;
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          stance,
-          stanceLabel
-        )
-      ) {
-        stance[stanceLabel]++;
-      }
-
-      // ----------------------------------------------------------------------
-      // Sarcasm
-      // ----------------------------------------------------------------------
-
-      if (
-        result.sarcasm?.detected ===
-        true
-      ) {
-        sarcasm.detected++;
-      } else if (
-        result.sarcasm?.detected ===
-        false
-      ) {
-        sarcasm.notDetected++;
-      }
-
-      // ----------------------------------------------------------------------
-      // Tier usage
-      // ----------------------------------------------------------------------
-
-      if (
-        result.tier === 1
-      ) {
-        tierUsage.tier1++;
-      } else if (
-        result.tier === 2
-      ) {
-        tierUsage.tier2++;
-      }
-    }
-
-    // ------------------------------------------------------------------------
-    // Platform summary
-    // ------------------------------------------------------------------------
-
-    const platformCounts =
-      getPlatformCounts(
-        data.events
-      );
-
-    // ------------------------------------------------------------------------
-    // Final derived sentiment result
-    // ------------------------------------------------------------------------
-
-    const result = {
-      category: "sentiment",
-
-      eventCount:
-        data.events.length,
-
-      analyzedCount:
-        results.length,
-
-      unanalyzedCount:
-        data.events.length -
-        results.length,
-
-      platformCounts,
-
-      summary,
-
-      emotions,
-
-      stance,
-
-      sarcasm,
-
-      tierUsage,
-
-      /*
-       * Individual event-level results are retained so downstream timeline
-       * analysis can associate sentiment/emotion changes with publishedAt.
-       */
-      results,
-    };
-
-    success(
-      "Sentiment",
-      `Processed ${results.length}/${data.events.length} events | ` +
-      `Tier1=${tierUsage.tier1} | ` +
-      `Tier2=${tierUsage.tier2}`
-    );
-
-    return result;
-  },
-
-  WORKER_OPTIONS
-);
+    WORKER_OPTIONS
+  );
+}
 
 // ============================================================================
 // 2. DEMOGRAPHIC WORKER
 // ============================================================================
 
-const demographicWorker = new Worker(
-  "DemographicQueue",
+function createDemographicWorker() {
+  return new Worker(
+    "DemographicQueue",
 
-  async (job) => {
-    const data =
-      getCanonicalData(job);
+    async (job) => {
+      const data =
+        getCanonicalData(job);
 
-    validateCollection(data);
+      validateCollection(data);
 
-    const trendLabel =
-      getTrendLabel(data);
+      const trendLabel =
+        getTrendLabel(data);
 
-    const profiles =
-      Array.isArray(data.authorProfiles)
-        ? data.authorProfiles
-        : [];
+      const profiles =
+        Array.isArray(data.authorProfiles)
+          ? data.authorProfiles
+          : [];
 
-    log(
-      "Demographic",
-      `Processing ${data.events.length} events | ` +
-      `Profiles=${profiles.length} | ` +
-      `Trend=${trendLabel}`
-    );
+      log(
+        "Demographic",
+        `Processing ${data.events.length} events | ` +
+        `Profiles=${profiles.length} | ` +
+        `Trend=${trendLabel}`
+      );
 
-    /*
-     * ------------------------------------------------------------------------
-     * DEMOGRAPHIC IMPLEMENTATION
-     * ------------------------------------------------------------------------
-     *
-     * Demographic analysis belongs here rather than in the scraper.
-     *
-     * The canonical raw layer should preserve:
-     *
-     *     authorProfiles[]
-     *
-     * without inventing demographic attributes.
-     *
-     * The demographic pipeline can later derive aggregate/anonymized
-     * demographic information from the available evidence.
-     */
+      /*
+       * ----------------------------------------------------------------------
+       * DEMOGRAPHIC IMPLEMENTATION
+       * ----------------------------------------------------------------------
+       *
+       * Demographic analysis belongs here rather than in the scraper.
+       *
+       * The canonical raw layer should preserve:
+       *
+       *     authorProfiles[]
+       *
+       * without inventing demographic attributes.
+       *
+       * The demographic pipeline can later derive aggregate/anonymized
+       * demographic information from the available evidence.
+       */
 
-    const result = {
-      category: "demographic",
+      const result = {
+        category: "demographic",
 
-      // Placeholder until the demographic implementation is connected.
-      topAge: null,
-      topRegion: null,
+        // Placeholder until the demographic implementation is connected.
+        topAge: null,
+        topRegion: null,
 
-      eventCount:
-        data.events.length,
+        eventCount:
+          data.events.length,
 
-      profilesAvailable:
-        profiles.length,
-    };
+        profilesAvailable:
+          profiles.length,
+      };
 
-    success(
-      "Demographic",
-      `Processed ${data.events.length} events.`
-    );
+      success(
+        "Demographic",
+        `Processed ${data.events.length} events.`
+      );
 
-    return result;
-  },
+      return result;
+    },
 
-  WORKER_OPTIONS
-);
+    WORKER_OPTIONS
+  );
+}
 
 // ============================================================================
 // 3. TREND WORKER
 // ============================================================================
 
-const trendWorker = new Worker(
-  "TrendQueue",
+function createTrendWorker() {
+  return new Worker(
+    "TrendQueue",
 
-  async (job) => {
-    const data =
-      getCanonicalData(job);
+    async (job) => {
+      const data =
+        getCanonicalData(job);
 
-    validateCollection(data);
+      validateCollection(data);
 
-    const trendLabel =
-      getTrendLabel(data);
+      const trendLabel =
+        getTrendLabel(data);
 
-    log(
-      "Trend",
-      `Processing ${data.events.length} events | ` +
-      `Trend=${trendLabel} | ` +
-      `Run=${data.collection.collectionId}`
-    );
-
-    /*
-     * ------------------------------------------------------------------------
-     * LOCAL TREND ANALYSIS
-     * ------------------------------------------------------------------------
-     *
-     * analyzeTrend() receives the canonical collection.
-     *
-     * It can derive:
-     *
-     * - platform activity
-     * - mentions
-     * - interactions
-     * - engagement
-     * - growth
-     * - lifecycle
-     * - influence
-     * - top influencers
-     *
-     * without modifying the canonical events.
-     */
-
-    const result =
-      analyzeTrend(data);
-
-    if (
-      !result ||
-      typeof result !== "object"
-    ) {
-      throw new Error(
-        "analyzeTrend() returned an invalid result."
+      log(
+        "Trend",
+        `Processing ${data.events.length} events | ` +
+        `Trend=${trendLabel} | ` +
+        `Run=${data.collection.collectionId}`
       );
-    }
 
-    /*
-     * ------------------------------------------------------------------------
-     * GLOBAL TREND REGISTRY
-     * ------------------------------------------------------------------------
-     */
+      // ----------------------------------------------------------------------
+      // Local trend analysis
+      // ----------------------------------------------------------------------
 
-    await recordTrendStats(
-      localSharedRedis,
-      result
-    );
+      const result =
+        analyzeTrend(data);
 
-    const enriched =
-      await enrichWithGlobalRanking(
+      if (
+        !result ||
+        typeof result !== "object"
+      ) {
+        throw new Error(
+          "analyzeTrend() returned an invalid result."
+        );
+      }
+
+      // ----------------------------------------------------------------------
+      // Global trend registry
+      // ----------------------------------------------------------------------
+
+      await recordTrendStats(
         localSharedRedis,
         result
       );
 
-    const ranking =
-      enriched.globalRanking;
+      const enriched =
+        await enrichWithGlobalRanking(
+          localSharedRedis,
+          result
+        );
 
-    if (ranking) {
-      log(
-        "Trend",
-        `${enriched.name ?? trendLabel}: ` +
-        `score=${enriched.trendScore ?? "n/a"} ` +
-        `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
-        `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
-        `${ranking.totalTrackedTrends ?? "n/a"} ` +
-        `(top ${ranking.percentile ?? "n/a"}%) ` +
-        `${ranking.tierMovement ?? "stable"}`
-      );
-    } else {
-      log(
-        "Trend",
-        `${enriched.name ?? trendLabel}: ` +
-        `trend analysis completed without global ranking.`
-      );
-    }
+      const ranking =
+        enriched.globalRanking;
 
-    return enriched;
-  },
+      if (ranking) {
+        log(
+          "Trend",
+          `${enriched.name ?? trendLabel}: ` +
+          `score=${enriched.trendScore ?? "n/a"} ` +
+          `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
+          `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
+          `${ranking.totalTrackedTrends ?? "n/a"} ` +
+          `(top ${ranking.percentile ?? "n/a"}%) ` +
+          `${ranking.tierMovement ?? "stable"}`
+        );
+      } else {
+        log(
+          "Trend",
+          `${enriched.name ?? trendLabel}: ` +
+          `trend analysis completed without global ranking.`
+        );
+      }
 
-  WORKER_OPTIONS
-);
+      return {
+        category: "trend",
+        ...enriched,
+      };
+    },
+
+    WORKER_OPTIONS
+  );
+}
 
 // ============================================================================
 // 4. NETWORK WORKER
 // ============================================================================
 
-const networkWorker = new Worker(
-  "NetworkQueue",
+function createNetworkWorker() {
+  return new Worker(
+    "NetworkQueue",
 
-  async (job) => {
-    const data =
-      getCanonicalData(job);
+    async (job) => {
+      const data =
+        getCanonicalData(job);
 
-    validateCollection(data);
+      validateCollection(data);
 
-    const trendLabel =
-      getTrendLabel(data);
+      const trendLabel =
+        getTrendLabel(data);
 
-    log(
-      "Network",
-      `Processing ${data.events.length} events | ` +
-      `Trend=${trendLabel} | ` +
-      `Run=${data.collection.collectionId}`
-    );
-
-    /*
-     * ------------------------------------------------------------------------
-     * NETWORK ANALYSIS
-     * ------------------------------------------------------------------------
-     *
-     * analyzeNetwork() receives the canonical collection.
-     *
-     * It can derive:
-     *
-     * - nodes
-     * - edges
-     * - communities
-     * - influencer rankings
-     *
-     * from canonical event relationships and author information.
-     */
-
-    const result =
-      analyzeNetwork(data);
-
-    if (
-      !result ||
-      typeof result !== "object"
-    ) {
-      throw new Error(
-        "analyzeNetwork() returned an invalid result."
+      log(
+        "Network",
+        `Processing ${data.events.length} events | ` +
+        `Trend=${trendLabel} | ` +
+        `Run=${data.collection.collectionId}`
       );
-    }
 
-    const nodeCount =
-      Array.isArray(result.nodes)
-        ? result.nodes.length
-        : 0;
+      // ----------------------------------------------------------------------
+      // Network analysis
+      // ----------------------------------------------------------------------
 
-    const edgeCount =
-      Array.isArray(result.edges)
-        ? result.edges.length
-        : 0;
+      const result =
+        analyzeNetwork(data);
 
-    const topInfluencer =
-      result.topInfluencers?.[0]?.label ??
-      "none";
+      if (
+        !result ||
+        typeof result !== "object"
+      ) {
+        throw new Error(
+          "analyzeNetwork() returned an invalid result."
+        );
+      }
 
-    log(
-      "Network",
-      `${trendLabel}: ` +
-      `${nodeCount} nodes, ` +
-      `${edgeCount} edges, ` +
-      `top=${topInfluencer}`
-    );
+      const nodeCount =
+        Array.isArray(result.nodes)
+          ? result.nodes.length
+          : 0;
 
-    return result;
-  },
+      const edgeCount =
+        Array.isArray(result.edges)
+          ? result.edges.length
+          : 0;
 
-  WORKER_OPTIONS
-);
+      const topInfluencer =
+        result.topInfluencers?.[0]?.label ??
+        "none";
+
+      log(
+        "Network",
+        `${trendLabel}: ` +
+        `${nodeCount} nodes, ` +
+        `${edgeCount} edges, ` +
+        `top=${topInfluencer}`
+      );
+
+      return {
+        category: "network",
+        ...result,
+      };
+    },
+
+    WORKER_OPTIONS
+  );
+}
 
 // ============================================================================
 // 5. DATABASE / PARENT WORKER
 // ============================================================================
 
-const databaseWorker = new Worker(
-  "DatabaseQueue",
+function createDatabaseWorker() {
+  return new Worker(
+    "DatabaseQueue",
 
-  async (job) => {
-    if (
-      !job?.data ||
-      typeof job.data !== "object"
-    ) {
-      throw new Error(
-        "Database job data is missing or invalid."
-      );
-    }
-
-    /*
-     * ------------------------------------------------------------------------
-     * Parent Job Metadata
-     * ------------------------------------------------------------------------
-     */
-
-    const {
-      trend_label,
-      runId,
-      eventIds,
-      schemaVersion,
-    } = job.data;
-
-    /*
-     * The Consumer should pass:
-     *
-     *     canonical: data
-     *
-     * to the parent job.
-     */
-
-    const canonical =
-      job.data.canonical;
-
-    if (!canonical) {
-      throw new Error(
-        "Database job is missing canonical collection."
-      );
-    }
-
-    validateCollection(
-      canonical
-    );
-
-    const resolvedRunId =
-      runId ??
-      canonical.collection.collectionId;
-
-    const resolvedTrendLabel =
-      trend_label ??
-      getTrendLabel(canonical);
-
-    const resolvedSchemaVersion =
-      schemaVersion ??
-      canonical.schemaVersion;
-
-    log(
-      "Database",
-      `Gathering results | ` +
-      `Trend=${resolvedTrendLabel} | ` +
-      `Run=${resolvedRunId}`
-    );
-
-    /*
-     * ------------------------------------------------------------------------
-     * Retrieve Child Results
-     * ------------------------------------------------------------------------
-     */
-
-    const childResults =
-      await job.getChildrenValues();
-
-    const rawValues =
-      Object.values(
-        childResults
-      );
-
-    /*
-     * ------------------------------------------------------------------------
-     * Structure Analytics
-     * ------------------------------------------------------------------------
-     */
-
-    const analytics = {};
-
-    for (
-      const result of rawValues
-    ) {
+    async (job) => {
       if (
-        !result ||
-        typeof result !== "object"
-      ) {
-        continue;
-      }
-
-      if (!result.category) {
-        continue;
-      }
-
-      const {
-        category,
-        ...resultData
-      } = result;
-
-      if (
-        analytics[category]
+        !job?.data ||
+        typeof job.data !== "object"
       ) {
         throw new Error(
-          `Duplicate analytics category '${category}'.`
+          "Database job data is missing or invalid."
         );
       }
 
-      analytics[category] =
-        resultData;
-    }
+      // ----------------------------------------------------------------------
+      // Parent Job Metadata
+      // ----------------------------------------------------------------------
 
-    /*
-     * ------------------------------------------------------------------------
-     * Database Record
-     * ------------------------------------------------------------------------
-     *
-     * Preserve the COMPLETE canonical collection rather than only events.
-     *
-     * This keeps:
-     *
-     *   collection
-     *   trend
-     *   platforms
-     *   events
-     *   authorProfiles
-     *   communities
-     *   quality
-     *
-     * available for provenance and future analysis.
-     */
+      const {
+        trend_label,
+        runId,
+        eventIds,
+        schemaVersion,
+      } = job.data;
 
-    const databaseRecord = {
-      run_id:
-        resolvedRunId,
+      /*
+       * The Consumer should pass:
+       *
+       *     canonical: data
+       *
+       * to the parent job.
+       */
 
-      trend_label:
-        resolvedTrendLabel,
+      const canonical =
+        job.data.canonical;
 
-      schema_version:
-        resolvedSchemaVersion,
+      if (!canonical) {
+        throw new Error(
+          "Database job is missing canonical collection."
+        );
+      }
 
-      canonical_collection:
-        canonical,
+      validateCollection(
+        canonical
+      );
 
-      analytics,
-    };
+      const resolvedRunId =
+        runId ??
+        canonical.collection.collectionId;
 
-    /*
-     * ------------------------------------------------------------------------
-     * PostgreSQL Persistence
-     * ------------------------------------------------------------------------
-     *
-     * Enable the INSERT once the PostgreSQL table is ready.
-     *
-     * Recommended table:
-     *
-     *     run_id TEXT PRIMARY KEY
-     *     trend_label TEXT NOT NULL
-     *     schema_version TEXT NOT NULL
-     *     canonical_collection JSONB NOT NULL
-     *     analytics JSONB NOT NULL
-     *     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-     */
+      const resolvedTrendLabel =
+        trend_label ??
+        getTrendLabel(canonical);
 
-    /*
-     * Example:
-     *
-     * const query = `
-     *   INSERT INTO trend_analytics (
-     *       run_id,
-     *       trend_label,
-     *       schema_version,
-     *       canonical_collection,
-     *       analytics
-     *   )
-     *   VALUES ($1, $2, $3, $4, $5)
-     *   ON CONFLICT (run_id) DO NOTHING
-     * `;
-     *
-     * await pgClient.query(query, [
-     *   databaseRecord.run_id,
-     *   databaseRecord.trend_label,
-     *   databaseRecord.schema_version,
-     *   JSON.stringify(databaseRecord.canonical_collection),
-     *   JSON.stringify(databaseRecord.analytics),
-     * ]);
-     */
+      const resolvedSchemaVersion =
+        schemaVersion ??
+        canonical.schemaVersion;
 
-    log(
-      "Database",
-      `Prepared record | ` +
-      `Events=${canonical.events.length} | ` +
-      `Analytics=${Object.keys(analytics).join(", ") || "none"}`
-    );
+      log(
+        "Database",
+        `Gathering results | ` +
+        `Trend=${resolvedTrendLabel} | ` +
+        `Run=${resolvedRunId}`
+      );
 
-    success(
-      "Database",
-      `Collection ${resolvedRunId} processed successfully.`
-    );
+      // ----------------------------------------------------------------------
+      // Retrieve Child Results
+      // ----------------------------------------------------------------------
 
-    return {
-      status: "success",
+      const childResults =
+        await job.getChildrenValues();
 
-      runId:
-        resolvedRunId,
+      const rawValues =
+        Object.values(
+          childResults
+        );
 
-      trend_label:
-        resolvedTrendLabel,
+      log(
+        "Database",
+        `Received ${rawValues.length} child result(s).`
+      );
 
-      eventCount:
-        canonical.events.length,
+      // ----------------------------------------------------------------------
+      // Structure Analytics
+      // ----------------------------------------------------------------------
 
-      analyticsCategories:
-        Object.keys(analytics),
-    };
-  },
+      const analytics = {};
 
-  WORKER_OPTIONS
-);
+      for (
+        const result of rawValues
+      ) {
+        if (
+          !result ||
+          typeof result !== "object"
+        ) {
+          continue;
+        }
+
+        if (!result.category) {
+          continue;
+        }
+
+        const {
+          category,
+          ...resultData
+        } = result;
+
+        if (
+          analytics[category]
+        ) {
+          throw new Error(
+            `Duplicate analytics category '${category}'.`
+          );
+        }
+
+        analytics[category] =
+          resultData;
+      }
+
+      // ----------------------------------------------------------------------
+      // Optional child-result visibility
+      // ----------------------------------------------------------------------
+
+      const analyticsCategories =
+        Object.keys(analytics);
+
+      log(
+        "Database",
+        `Analytics categories: ` +
+        `${analyticsCategories.join(", ") || "none"}`
+      );
+
+      // ----------------------------------------------------------------------
+      // Database Record
+      // ----------------------------------------------------------------------
+
+      const databaseRecord = {
+        run_id:
+          resolvedRunId,
+
+        trend_label:
+          resolvedTrendLabel,
+
+        schema_version:
+          resolvedSchemaVersion,
+
+        canonical_collection:
+          canonical,
+
+        analytics,
+      };
+
+      /*
+       * ----------------------------------------------------------------------
+       * PostgreSQL Persistence
+       * ----------------------------------------------------------------------
+       *
+       * Currently disabled.
+       *
+       * Enable this INSERT when the PostgreSQL table is ready.
+       *
+       * Recommended table:
+       *
+       *     run_id TEXT PRIMARY KEY
+       *     trend_label TEXT NOT NULL
+       *     schema_version TEXT NOT NULL
+       *     canonical_collection JSONB NOT NULL
+       *     analytics JSONB NOT NULL
+       *     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+       */
+
+      /*
+      const query = `
+        INSERT INTO trend_analytics (
+          run_id,
+          trend_label,
+          schema_version,
+          canonical_collection,
+          analytics
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (run_id)
+        DO UPDATE SET
+          trend_label = EXCLUDED.trend_label,
+          schema_version = EXCLUDED.schema_version,
+          canonical_collection = EXCLUDED.canonical_collection,
+          analytics = EXCLUDED.analytics
+      `;
+
+      await pgClient.query(query, [
+        databaseRecord.run_id,
+        databaseRecord.trend_label,
+        databaseRecord.schema_version,
+        JSON.stringify(
+          databaseRecord.canonical_collection
+        ),
+        JSON.stringify(
+          databaseRecord.analytics
+        ),
+      ]);
+      */
+
+      log(
+        "Database",
+        `Prepared record | ` +
+        `Events=${canonical.events.length} | ` +
+        `Analytics=${analyticsCategories.join(", ") || "none"}`
+      );
+
+      success(
+        "Database",
+        `Collection ${resolvedRunId} processed successfully.`
+      );
+
+      return {
+        status: "success",
+
+        runId:
+          resolvedRunId,
+
+        trend_label:
+          resolvedTrendLabel,
+
+        eventCount:
+          canonical.events.length,
+
+        analyticsCategories,
+      };
+    },
+
+    WORKER_OPTIONS
+  );
+}
 
 // ============================================================================
 // Worker Registry
 // ============================================================================
 
-const workers = [
-  sentimentWorker,
-  demographicWorker,
-  trendWorker,
-  networkWorker,
-  databaseWorker,
-];
+let workers = [];
 
 // ============================================================================
 // Worker Event Handling
 // ============================================================================
 
-for (
-  const worker of workers
-) {
+function registerWorkerEvents(worker) {
   worker.on(
     "completed",
     (job) => {
@@ -1255,6 +1247,128 @@ for (
       );
     }
   );
+}
+
+// ============================================================================
+// Worker Startup
+// ============================================================================
+
+async function startWorkers() {
+  try {
+    // ------------------------------------------------------------------------
+    // Load sentiment pipeline BEFORE creating workers
+    // ------------------------------------------------------------------------
+
+    await loadSentimentPipeline();
+
+    // ------------------------------------------------------------------------
+    // Create workers
+    // ------------------------------------------------------------------------
+
+    const sentimentWorker =
+      createSentimentWorker();
+
+    const demographicWorker =
+      createDemographicWorker();
+
+    const trendWorker =
+      createTrendWorker();
+
+    const networkWorker =
+      createNetworkWorker();
+
+    const databaseWorker =
+      createDatabaseWorker();
+
+    workers = [
+      sentimentWorker,
+      demographicWorker,
+      trendWorker,
+      networkWorker,
+      databaseWorker,
+    ];
+
+    // ------------------------------------------------------------------------
+    // Register events
+    // ------------------------------------------------------------------------
+
+    for (const worker of workers) {
+      registerWorkerEvents(worker);
+    }
+
+    // ------------------------------------------------------------------------
+    // Startup logging
+    // ------------------------------------------------------------------------
+
+    console.log(
+      "\n========================================"
+    );
+
+    console.log(
+      "BullMQ workers are online."
+    );
+
+    console.log(
+      "========================================"
+    );
+
+    console.log(
+      `Schema: ${SUPPORTED_SCHEMA_VERSION}`
+    );
+
+    console.log(
+      "Queues:"
+    );
+
+    console.log(
+      "  - SentimentQueue"
+    );
+
+    console.log(
+      "  - DemographicQueue"
+    );
+
+    console.log(
+      "  - TrendQueue"
+    );
+
+    console.log(
+      "  - NetworkQueue"
+    );
+
+    console.log(
+      "  - DatabaseQueue"
+    );
+
+    console.log(
+      "Concurrency: 5 per worker"
+    );
+
+    console.log(
+      "Sentiment: loaded"
+    );
+
+    console.log(
+      "========================================\n"
+    );
+
+  } catch (err) {
+    console.error(
+      "\n========================================"
+    );
+
+    console.error(
+      "FAILED TO START BULLMQ WORKERS"
+    );
+
+    console.error(
+      "========================================"
+    );
+
+    console.error(err);
+
+    process.exit(1);
+  }
 }
 
 // ============================================================================
@@ -1334,41 +1448,7 @@ process.on(
 );
 
 // ============================================================================
-// Startup
+// Start
 // ============================================================================
 
-console.log(
-  "\nBullMQ workers are online."
-);
-
-console.log(
-  `Schema: ${SUPPORTED_SCHEMA_VERSION}`
-);
-
-console.log(
-  "Queues:"
-);
-
-console.log(
-  "  - SentimentQueue"
-);
-
-console.log(
-  "  - DemographicQueue"
-);
-
-console.log(
-  "  - TrendQueue"
-);
-
-console.log(
-  "  - NetworkQueue"
-);
-
-console.log(
-  "  - DatabaseQueue"
-);
-
-console.log(
-  "Concurrency: 5 per worker"
-);
+startWorkers();
