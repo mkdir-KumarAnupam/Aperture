@@ -5,22 +5,27 @@
  *
  * Purpose:
  *   Convert one canonical Social Media Analytics event (schema v1.0.0)
- *   into a common analytics-friendly representation.
+ *   into a common analytics-friendly DERIVED representation.
  *
- * INPUT
- * -----
  *
- * Canonical event produced by:
+ * ARCHITECTURE
+ * ------------
  *
  *   X / Reddit / Telegram
- *          ↓
- *      Scraper
- *          ↓
- *       Daemon
- *          ↓
- *     Redis Stream
- *          ↓
- *      normalizeData()
+ *            ↓
+ *         Scraper
+ *            ↓
+ *      Canonical Event
+ *            ↓
+ *       Redis Stream
+ *            ↓
+ *         Producer
+ *            ↓
+ *     normalizeData()
+ *            ↓
+ *    Normalized Event
+ *            ↓
+ *       Analytics
  *
  *
  * SUPPORTED PLATFORMS
@@ -34,10 +39,17 @@
  * IMPORTANT ARCHITECTURAL RULE
  * ----------------------------
  *
- * The canonical event is the source of truth.
+ * The canonical event is the SOURCE OF TRUTH.
  *
- * normalizeData() creates a DERIVED representation for downstream
- * analytics. It must never modify or redefine the canonical event.
+ * normalizeData() creates a DERIVED representation for downstream analytics.
+ *
+ * It must NEVER:
+ *
+ *   - modify the canonical event
+ *   - redefine the canonical event
+ *   - fabricate missing metrics
+ *   - convert unavailable values into zero
+ *   - reinterpret one metric as another metric
  *
  *
  * DATA SAFETY RULES
@@ -50,75 +62,28 @@
  * - Platform identity remains x/reddit/telegram.
  * - Relationships come from canonical relationships.
  * - Timestamps are normalized to ISO UTC.
- *
- *
- * VERIFIED PLATFORM DATA
- * -----------------------
- *
- * X:
- *   Current scraper does NOT provide event-level platformData.
- *   Its verified platformData belongs to authorProfiles:
- *
- *     pinnedTweetId
- *     url
- *     followingCount
- *     tweetCount
- *
- *   Therefore these are NOT used by normalizeX() for events.
- *
- *
- * Reddit POST:
- *
- *   subreddit
- *   subredditId
- *   subredditNamePrefixed
- *   score
- *   upvoteRatio
- *   domain
- *   isSelf
- *   isVideo
- *   over18
- *   stickied
- *   locked
- *   spoiler
- *   distinguished
- *   permalink
- *   postHint
- *
- *
- * Reddit COMMENT:
- *
- *   subreddit
- *   subredditId
- *   score
- *   permalink
- *   depth
- *   stickied
- *   edited
- *   distinguished
- *
- *
- * Telegram EVENT:
- *
- *   peerKind
- *   peerId
- *   channelId
- *   channelUsername
- *   channelTitle
- *   forwards
- *   reactionsTotal
- *   reactions
- *   forwardFromPeer
+ * - Source language is preserved when available.
+ * - Detected language is only a fallback.
+ * - Views and impressions are NOT treated as reach.
  *
  * ============================================================================
  */
 
+
 /**
- * Unified analytics-friendly representation.
+ * ============================================================================
+ * NORMALIZED EVENT
+ * ============================================================================
  *
- * @typedef {Object} NormalizedPost
+ * This is NOT the canonical schema.
  *
- * @property {string|null} postId
+ * It is a smaller analytics-friendly representation derived from one
+ * canonical event.
+ *
+ * @typedef {Object} NormalizedEvent
+ *
+ * @property {string|null} eventId
+ * @property {string|null} platformPostId
  * @property {"x"|"reddit"|"telegram"|null} platform
  *
  * @property {string|null} conversationId
@@ -143,9 +108,14 @@
  * @property {number|null} velocityWindow
  *
  * @property {number|null} interactions
+ *
+ * @property {number|null} views
+ * @property {number|null} impressions
  * @property {number|null} reach
+ *
  * @property {number|null} engagementRate
  *
+ * @property {number|null} score
  * @property {number|null} approvalScore
  * @property {number|null} voteConfidence
  *
@@ -154,43 +124,54 @@
 
 
 /**
+ * ============================================================================
+ * PUBLIC NORMALIZER
+ * ============================================================================
+ */
+
+/**
  * Normalize a single canonical v1.0.0 event.
  *
- * @param {Object} post
- * @returns {NormalizedPost}
+ * The returned object is DERIVED data.
+ *
+ * The input event is never modified.
+ *
+ * @param {Object} event
+ * @returns {NormalizedEvent}
  */
-function normalizeData(post) {
+function normalizeData(event) {
   /*
-   * A completely invalid argument is different from a valid event
-   * containing malformed individual fields.
+   * A completely invalid argument is different from a valid event containing
+   * malformed individual fields.
    *
    * The latter should be handled safely by the platform normalizers.
    */
   if (
-    typeof post !== "object" ||
-    post === null ||
-    Array.isArray(post)
+    typeof event !== "object" ||
+    event === null ||
+    Array.isArray(event)
   ) {
     throw new Error(
-      "normalizeData: expected an event object, got " +
-      safeStringify(post)
+      "normalizeData: expected a canonical event object, got " +
+      safeStringify(event)
     );
   }
 
-  const platform = detectPlatform(post);
+  const platform =
+    detectPlatform(event);
 
   switch (platform) {
     case "x":
-      return normalizeX(post);
+      return normalizeX(event);
 
     case "reddit":
-      return normalizeReddit(post);
+      return normalizeReddit(event);
 
     case "telegram":
-      return normalizeTelegram(post);
+      return normalizeTelegram(event);
 
     default:
-      return normalizeUnknown(post);
+      return normalizeUnknown(event);
   }
 }
 
@@ -205,26 +186,284 @@ function normalizeData(post) {
  * `twitter` is retained as an input compatibility alias, but all normalized
  * output uses the canonical platform identifier `x`.
  *
- * @param {Object} post
+ * @param {Object} event
  * @returns {"x"|"reddit"|"telegram"|null}
  */
-function detectPlatform(post) {
+function detectPlatform(event) {
   if (
-    post.platform === "x" ||
-    post.platform === "twitter"
+    event.platform === "x" ||
+    event.platform === "twitter"
   ) {
     return "x";
   }
 
-  if (post.platform === "reddit") {
+  if (event.platform === "reddit") {
     return "reddit";
   }
 
-  if (post.platform === "telegram") {
+  if (event.platform === "telegram") {
     return "telegram";
   }
 
   return null;
+}
+
+
+// ============================================================================
+// SHARED NORMALIZATION
+// ============================================================================
+
+/**
+ * Normalize common event identity fields.
+ *
+ * We retain BOTH:
+ *
+ *   eventId
+ *   platformPostId
+ *
+ * because they have different meanings.
+ *
+ * eventId:
+ *   Collector-level identity.
+ *
+ * platformPostId:
+ *   Native platform identity.
+ *
+ * @param {Object} event
+ * @returns {Object}
+ */
+function normalizeIdentity(event) {
+  return {
+    eventId:
+      stringOrNull(
+        event.eventId
+      ),
+
+    platformPostId:
+      stringOrNull(
+        event.platformPostId
+      ),
+  };
+}
+
+
+/**
+ * Normalize common content fields.
+ *
+ * @param {Object} content
+ * @returns {Object}
+ */
+function normalizeContent(content) {
+  const safeContent =
+    objectOrEmpty(content);
+
+  return {
+    text:
+      stringOrNull(
+        safeContent.text
+      ),
+
+    title:
+      stringOrNull(
+        safeContent.title
+      ),
+
+    hashtags:
+      normalizeStringArray(
+        safeContent.hashtags
+      ),
+
+    urls:
+      normalizeUrls(
+        safeContent.urls
+      ),
+
+    mentions:
+      normalizeStringArray(
+        safeContent.mentions
+      ),
+
+    /*
+     * Preserve source language first.
+     *
+     * Detected language is only a fallback when source language is missing.
+     *
+     * This does NOT modify the canonical event.
+     */
+    language:
+      stringOrNull(
+        safeContent.language
+      ) ??
+      stringOrNull(
+        safeContent.detectedLang
+      ),
+  };
+}
+
+
+/**
+ * Normalize common author fields.
+ *
+ * @param {Object} author
+ * @returns {Object}
+ */
+function normalizeAuthor(author) {
+  const safeAuthor =
+    objectOrEmpty(author);
+
+  return {
+    authorId:
+      stringOrNull(
+        safeAuthor.authorId
+      ),
+
+    authorHandle:
+      stringOrNull(
+        safeAuthor.authorHandle
+      ),
+
+    /*
+     * Author reach is intentionally NOT inferred.
+     *
+     * Do not use:
+     *
+     *   likes
+     *   views
+     *   reposts
+     *   channel subscribers
+     *   engagement
+     *
+     * as a substitute for author reach.
+     */
+    authorReach: null,
+  };
+}
+
+
+/**
+ * Normalize common relationships.
+ *
+ * Only the canonical reply relationship is represented as parentId.
+ *
+ * Crossposts and forwards are NOT silently converted into parent-child
+ * relationships.
+ *
+ * @param {Object} relationships
+ * @returns {Object}
+ */
+function normalizeRelationships(relationships) {
+  const safeRelationships =
+    objectOrEmpty(
+      relationships
+    );
+
+  return {
+    conversationId:
+      stringOrNull(
+        safeRelationships.conversationId
+      ),
+
+    parentId:
+      stringOrNull(
+        safeRelationships.replyToId
+      ),
+  };
+}
+
+
+/**
+ * Normalize common time fields.
+ *
+ * @param {Object} time
+ * @returns {Object}
+ */
+function normalizeTime(time) {
+  const safeTime =
+    objectOrEmpty(time);
+
+  const publishedAt =
+    toIsoOrNull(
+      safeTime.publishedAt
+    );
+
+  const observedAt =
+    toIsoOrNull(
+      safeTime.observedAt
+    );
+
+  return {
+    publishedAt,
+
+    observedAt,
+
+    velocityWindow:
+      hoursBetween(
+        publishedAt,
+        observedAt
+      ),
+  };
+}
+
+
+/**
+ * Build the fields shared by all supported platforms.
+ *
+ * @param {Object} event
+ * @param {"x"|"reddit"|"telegram"|null} platform
+ * @returns {Object}
+ */
+function baseNormalizedEvent(
+  event,
+  platform
+) {
+  const identity =
+    normalizeIdentity(
+      event
+    );
+
+  const content =
+    normalizeContent(
+      event.content
+    );
+
+  const author =
+    normalizeAuthor(
+      event.author
+    );
+
+  const relationships =
+    normalizeRelationships(
+      event.relationships
+    );
+
+  const time =
+    normalizeTime(
+      event.time
+    );
+
+  const source =
+    objectOrEmpty(
+      event.source
+    );
+
+  return {
+    ...identity,
+
+    platform,
+
+    ...relationships,
+
+    ...author,
+
+    ...content,
+
+    ...time,
+
+    sourceLayer:
+      stringOrNull(
+        source.sourceLayer
+      ),
+  };
 }
 
 
@@ -239,16 +478,17 @@ function detectPlatform(post) {
  *
  * The verified X scraper currently does not attach event-level platformData.
  *
- * The platformData we inspected in x.py belongs to the author lookup:
+ * The verified X platformData belongs to authorProfiles:
  *
  *   pinnedTweetId
  *   url
  *   followingCount
  *   tweetCount
  *
- * Those fields therefore do NOT belong in the event normalizer.
+ * Those fields therefore do NOT belong in the X event normalizer.
  *
- * X event analytics are derived from the canonical common fields:
+ *
+ * X event analytics are derived from:
  *
  *   content
  *   author
@@ -257,46 +497,49 @@ function detectPlatform(post) {
  *   relationships
  *   source
  */
-function normalizeX(post) {
-  const content =
-    objectOrEmpty(post.content);
-
-  const author =
-    objectOrEmpty(post.author);
-
-  const time =
-    objectOrEmpty(post.time);
-
+function normalizeX(event) {
   const engagement =
-    objectOrEmpty(post.engagement);
+    objectOrEmpty(
+      event.engagement
+    );
 
-  const relationships =
-    objectOrEmpty(post.relationships);
-
-  const source =
-    objectOrEmpty(post.source);
+  const result =
+    baseNormalizedEvent(
+      event,
+      "x"
+    );
 
   // --------------------------------------------------------------------------
   // Engagement
   // --------------------------------------------------------------------------
 
   const likes =
-    numOrNull(engagement.likes);
+    numOrNull(
+      engagement.likes
+    );
 
   const replies =
-    numOrNull(engagement.replies);
+    numOrNull(
+      engagement.replies
+    );
 
   const reposts =
-    numOrNull(engagement.reposts);
+    numOrNull(
+      engagement.reposts
+    );
 
   const quotes =
-    numOrNull(engagement.quotes);
+    numOrNull(
+      engagement.quotes
+    );
 
   const bookmarks =
-    numOrNull(engagement.bookmarks);
+    numOrNull(
+      engagement.bookmarks
+    );
 
   /*
-   * Only sum metrics that the source actually provided.
+   * Sum only engagement metrics actually supplied by the source.
    *
    * Example:
    *
@@ -308,7 +551,10 @@ function normalizeX(post) {
    *
    *   interactions=12
    *
-   * rather than treating replies as zero in the source data.
+   * Missing replies are NOT interpreted as zero in the source.
+   *
+   * The derived interaction total is still calculated from the available
+   * explicit engagement signals.
    */
   const interactions =
     sumAvailable([
@@ -320,138 +566,44 @@ function normalizeX(post) {
     ]);
 
   // --------------------------------------------------------------------------
-  // Reach
+  // Views / impressions
   // --------------------------------------------------------------------------
-
-  /*
-   * X canonical events may provide either impressions or views.
-   *
-   * We preserve the distinction in the source.
-   *
-   * For the unified `reach` field:
-   *
-   *   impressions → preferred
-   *   views       → fallback
-   *
-   * No metric is fabricated.
-   */
-  const impressions =
-    numOrNull(engagement.impressions);
 
   const views =
-    numOrNull(engagement.views);
+    numOrNull(
+      engagement.views
+    );
 
-  const reach =
-    impressions !== null
-      ? impressions
-      : views;
+  const impressions =
+    numOrNull(
+      engagement.impressions
+    );
 
-  // --------------------------------------------------------------------------
-  // Time
-  // --------------------------------------------------------------------------
-
-  const publishedAt =
-    toIsoOrNull(time.publishedAt);
-
-  const observedAt =
-    toIsoOrNull(time.observedAt);
+  /*
+   * IMPORTANT:
+   *
+   * Views and impressions are not automatically equivalent to reach.
+   *
+   * Therefore:
+   *
+   *   reach = null
+   *
+   * unless the canonical source explicitly provides a reach metric.
+   */
+  const reach = null;
 
   // --------------------------------------------------------------------------
   // Output
   // --------------------------------------------------------------------------
 
   return {
-    postId: stringOrNull(
-      post.platformPostId ??
-      post.eventId
-    ),
-
-    platform: "x",
-
-    conversationId:
-      stringOrNull(
-        relationships.conversationId
-      ),
-
-    parentId:
-      stringOrNull(
-        relationships.replyToId
-      ),
-
-    authorId:
-      stringOrNull(
-        author.authorId
-      ),
-
-    authorHandle:
-      stringOrNull(
-        author.authorHandle
-      ),
-
-    /*
-     * Follower count is not present in the canonical X event.
-     *
-     * Do NOT take:
-     *
-     *   likes
-     *   views
-     *   reposts
-     *
-     * and pretend one of them is author reach.
-     */
-    authorReach: null,
-
-    text:
-      stringOrNull(
-        content.text
-      ),
-
-    title:
-      stringOrNull(
-        content.title
-      ),
-
-    hashtags:
-      normalizeStringArray(
-        content.hashtags
-      ),
-
-    urls:
-      normalizeUrls(
-        content.urls
-      ),
-
-    mentions:
-      normalizeStringArray(
-        content.mentions
-      ),
-
-    /*
-     * Preserve source language first.
-     *
-     * If unavailable, use detector output.
-     *
-     * We do not overwrite content.language with detectedLang.
-     */
-    language:
-      stringOrNull(
-        content.language
-      ) ??
-      stringOrNull(
-        content.detectedLang
-      ),
-
-    publishedAt,
-
-    observedAt,
-
-    velocityWindow:
-      hoursBetween(
-        publishedAt,
-        observedAt
-      ),
+    ...result,
 
     interactions,
+
+    views,
+
+    impressions,
 
     reach,
 
@@ -462,26 +614,17 @@ function normalizeX(post) {
       ),
 
     /*
-     * Approval score is intentionally left null here.
+     * X does not expose an explicit voting/approval metric in the canonical
+     * event structure.
      *
-     * Likes/reposts/quotes/bookmarks are engagement signals,
-     * not explicit approval/voting signals.
-     *
-     * A future model can derive sentiment/approval independently.
+     * Likes/reposts/quotes/bookmarks are engagement signals, not explicit
+     * approval labels.
      */
+    score: null,
+
     approvalScore: null,
 
-    /*
-     * Same reasoning:
-     *
-     * X does not expose an explicit vote-confidence metric.
-     */
     voteConfidence: null,
-
-    sourceLayer:
-      stringOrNull(
-        source.sourceLayer
-      ),
   };
 }
 
@@ -511,6 +654,7 @@ function normalizeX(post) {
  *   permalink
  *   postHint
  *
+ *
  * Verified Reddit COMMENT platformData:
  *
  *   subreddit
@@ -522,27 +666,27 @@ function normalizeX(post) {
  *   edited
  *   distinguished
  */
-function normalizeReddit(post) {
+function normalizeReddit(event) {
   const content =
-    objectOrEmpty(post.content);
-
-  const author =
-    objectOrEmpty(post.author);
-
-  const time =
-    objectOrEmpty(post.time);
+    objectOrEmpty(
+      event.content
+    );
 
   const engagement =
-    objectOrEmpty(post.engagement);
-
-  const relationships =
-    objectOrEmpty(post.relationships);
-
-  const source =
-    objectOrEmpty(post.source);
+    objectOrEmpty(
+      event.engagement
+    );
 
   const platformData =
-    objectOrEmpty(post.platformData);
+    objectOrEmpty(
+      event.platformData
+    );
+
+  const result =
+    baseNormalizedEvent(
+      event,
+      "reddit"
+    );
 
   // --------------------------------------------------------------------------
   // Reddit score
@@ -553,9 +697,11 @@ function normalizeReddit(post) {
    *
    *   platformData.score
    *
-   * There is no confirmed canonical `engagement.score`.
+   * There is no confirmed canonical:
    *
-   * Therefore we use the actual verified field directly.
+   *   engagement.score
+   *
+   * Therefore use the verified platform-specific field.
    */
   const score =
     numOrNull(
@@ -563,16 +709,17 @@ function normalizeReddit(post) {
     );
 
   // --------------------------------------------------------------------------
-  // Comments / replies
+  // Replies
   // --------------------------------------------------------------------------
 
   /*
-   * The canonical engagement structure already provides:
+   * The canonical engagement structure provides replies.
    *
-   *   engagement.replies
+   * Do not assume:
    *
-   * Do not assume `numComments`, because that field was NOT present in the
-   * verified platformData implementation.
+   *   numComments
+   *
+   * because that field is not part of the verified canonical structure.
    */
   const replies =
     numOrNull(
@@ -580,19 +727,16 @@ function normalizeReddit(post) {
     );
 
   /*
-   * Reddit score + replies are useful aggregate interaction signals.
+   * IMPORTANT:
    *
-   * Score can be negative, so absolute score is used only for the derived
-   * interaction magnitude.
+   * Reddit score is a voting score.
+   *
+   * It is NOT an interaction count.
+   *
+   * Therefore it is preserved as `score` and is not added to interactions.
    */
   const interactions =
-    sumAvailable([
-      score !== null
-        ? Math.abs(score)
-        : null,
-
-      replies,
-    ]);
+    replies;
 
   // --------------------------------------------------------------------------
   // Approval
@@ -601,52 +745,29 @@ function normalizeReddit(post) {
   /*
    * Reddit explicitly provides upvoteRatio for posts.
    *
-   * This is a much more defensible approval signal than inventing one from
-   * generic engagement metrics.
+   * This is a defensible approval signal because it is a source-provided
+   * platform metric.
+   *
+   * We do not manufacture this value for comments/events where unavailable.
    */
-  let approvalScore =
+  const approvalScore =
     numOrNull(
       platformData.upvoteRatio
     );
-
-  /*
-   * Do not attempt to calculate:
-   *
-   *   upvotes / (upvotes + downvotes)
-   *
-   * because the current verified scraper does not provide separate
-   * upvote/downvote fields in platformData.
-   */
 
   // --------------------------------------------------------------------------
   // Reach
   // --------------------------------------------------------------------------
 
   /*
-   * No verified Reddit event-level reach metric exists in the scraper
-   * structure we inspected.
-   *
-   * subreddit subscribers were NOT present in the verified platformData.
+   * No verified Reddit event-level reach metric exists in the current
+   * canonical structure.
    *
    * Therefore:
    *
    *   reach = null
    */
   const reach = null;
-
-  // --------------------------------------------------------------------------
-  // Time
-  // --------------------------------------------------------------------------
-
-  const publishedAt =
-    toIsoOrNull(
-      time.publishedAt
-    );
-
-  const observedAt =
-    toIsoOrNull(
-      time.observedAt
-    );
 
   // --------------------------------------------------------------------------
   // Hashtags
@@ -657,6 +778,11 @@ function normalizeReddit(post) {
       content.hashtags
     );
 
+  /*
+   * Prefer canonical hashtags.
+   *
+   * Text extraction is only a derived fallback.
+   */
   const hashtags =
     canonicalHashtags.length > 0
       ? canonicalHashtags
@@ -670,97 +796,19 @@ function normalizeReddit(post) {
       );
 
   // --------------------------------------------------------------------------
-  // Parent relationship
-  // --------------------------------------------------------------------------
-
-  /*
-   * Prefer the canonical reply relationship.
-   *
-   * Crossposts are NOT replies.
-   *
-   * Therefore crosspostOfId is deliberately not converted into parentId.
-   */
-  const parentId =
-    stringOrNull(
-      relationships.replyToId
-    );
-
-  // --------------------------------------------------------------------------
   // Output
   // --------------------------------------------------------------------------
 
   return {
-    postId:
-      stringOrNull(
-        post.platformPostId ??
-        post.eventId
-      ),
-
-    platform: "reddit",
-
-    conversationId:
-      stringOrNull(
-        relationships.conversationId
-      ),
-
-    parentId,
-
-    authorId:
-      stringOrNull(
-        author.authorId
-      ),
-
-    authorHandle:
-      stringOrNull(
-        author.authorHandle
-      ),
-
-    /*
-     * The verified Reddit event does not contain author reach.
-     */
-    authorReach: null,
-
-    text:
-      stringOrNull(
-        content.text
-      ),
-
-    title:
-      stringOrNull(
-        content.title
-      ),
+    ...result,
 
     hashtags,
 
-    urls:
-      normalizeUrls(
-        content.urls
-      ),
-
-    mentions:
-      normalizeStringArray(
-        content.mentions
-      ),
-
-    language:
-      stringOrNull(
-        content.language
-      ) ??
-      stringOrNull(
-        content.detectedLang
-      ),
-
-    publishedAt,
-
-    observedAt,
-
-    velocityWindow:
-      hoursBetween(
-        publishedAt,
-        observedAt
-      ),
-
     interactions,
+
+    views: null,
+
+    impressions: null,
 
     reach,
 
@@ -770,20 +818,16 @@ function normalizeReddit(post) {
         reach
       ),
 
+    score,
+
     approvalScore,
 
     /*
-     * A score is not itself a probability/confidence measure.
+     * Reddit score/upvote ratio is not a confidence probability.
      *
-     * Therefore this remains null rather than converting Reddit score
-     * into a fabricated confidence metric.
+     * Therefore this remains null.
      */
     voteConfidence: null,
-
-    sourceLayer:
-      stringOrNull(
-        source.sourceLayer
-      ),
   };
 }
 
@@ -807,52 +851,46 @@ function normalizeReddit(post) {
  *   reactions
  *   forwardFromPeer
  *
+ *
  * Verified canonical engagement:
  *
- *   likes = null
- *   replies = replies_count
- *   reposts = null
- *   quotes = null
- *   bookmarks = null
- *   views = views
- *   impressions = null
+ *   likes
+ *   replies
+ *   reposts
+ *   quotes
+ *   bookmarks
+ *   views
+ *   impressions
  */
-function normalizeTelegram(post) {
-  const content =
-    objectOrEmpty(post.content);
-
-  const author =
-    objectOrEmpty(post.author);
-
-  const time =
-    objectOrEmpty(post.time);
-
+function normalizeTelegram(event) {
   const engagement =
-    objectOrEmpty(post.engagement);
-
-  const relationships =
-    objectOrEmpty(post.relationships);
-
-  const source =
-    objectOrEmpty(post.source);
+    objectOrEmpty(
+      event.engagement
+    );
 
   const platformData =
-    objectOrEmpty(post.platformData);
+    objectOrEmpty(
+      event.platformData
+    );
+
+  const result =
+    baseNormalizedEvent(
+      event,
+      "telegram"
+    );
 
   // --------------------------------------------------------------------------
   // Reactions
   // --------------------------------------------------------------------------
 
   /*
-   * IMPORTANT:
-   *
    * The verified Telegram scraper stores aggregate reactions in:
    *
    *   platformData.reactionsTotal
    *
-   * It does NOT put them into engagement.likes.
+   * It does not place them into engagement.likes.
    *
-   * Therefore use reactionsTotal as the Telegram-specific reaction signal.
+   * Therefore use reactionsTotal directly.
    */
   const reactionsTotal =
     numOrNull(
@@ -864,7 +902,7 @@ function normalizeTelegram(post) {
   // --------------------------------------------------------------------------
 
   /*
-   * Telegram's canonical engagement builder explicitly supplies replies.
+   * Telegram canonical engagement provides replies.
    */
   const replies =
     numOrNull(
@@ -876,10 +914,15 @@ function normalizeTelegram(post) {
   // --------------------------------------------------------------------------
 
   /*
-   * Reaction total + replies are the confirmed interaction signals.
+   * Confirmed interaction signals:
    *
-   * Forwards are deliberately NOT included because they are not necessarily
-   * an interaction with the original message.
+   *   reactions
+   *   replies
+   *
+   * Forwards are deliberately excluded.
+   *
+   * A forward is a distribution signal rather than necessarily an
+   * interaction with the original message.
    */
   const interactions =
     sumAvailable([
@@ -888,122 +931,34 @@ function normalizeTelegram(post) {
     ]);
 
   // --------------------------------------------------------------------------
-  // Reach
+  // Views
   // --------------------------------------------------------------------------
 
   /*
-   * The Telegram scraper explicitly supplies views through the canonical
-   * engagement field.
+   * Telegram views are explicitly supplied through canonical engagement.
    */
   const views =
     numOrNull(
       engagement.views
     );
 
-  const reach = views;
-
-  // --------------------------------------------------------------------------
-  // Time
-  // --------------------------------------------------------------------------
-
-  const publishedAt =
-    toIsoOrNull(
-      time.publishedAt
-    );
-
-  const observedAt =
-    toIsoOrNull(
-      time.observedAt
-    );
+  /*
+   * Views are not automatically reach.
+   */
+  const reach = null;
 
   // --------------------------------------------------------------------------
   // Output
   // --------------------------------------------------------------------------
 
   return {
-    postId:
-      stringOrNull(
-        post.platformPostId ??
-        post.eventId
-      ),
-
-    platform: "telegram",
-
-    conversationId:
-      stringOrNull(
-        relationships.conversationId
-      ),
-
-    /*
-     * Prefer an actual reply relationship.
-     *
-     * Forward relationships are not automatically treated as parent-child
-     * relationships in the normalized representation.
-     */
-    parentId:
-      stringOrNull(
-        relationships.replyToId
-      ),
-
-    authorId:
-      stringOrNull(
-        author.authorId
-      ),
-
-    authorHandle:
-      stringOrNull(
-        author.authorHandle
-      ),
-
-    /*
-     * Channel metadata is not automatically author reach.
-     */
-    authorReach: null,
-
-    text:
-      stringOrNull(
-        content.text
-      ),
-
-    title:
-      stringOrNull(
-        content.title
-      ),
-
-    hashtags:
-      normalizeStringArray(
-        content.hashtags
-      ),
-
-    urls:
-      normalizeUrls(
-        content.urls
-      ),
-
-    mentions:
-      normalizeStringArray(
-        content.mentions
-      ),
-
-    language:
-      stringOrNull(
-        content.language
-      ) ??
-      stringOrNull(
-        content.detectedLang
-      ),
-
-    publishedAt,
-
-    observedAt,
-
-    velocityWindow:
-      hoursBetween(
-        publishedAt,
-        observedAt
-      ),
+    ...result,
 
     interactions,
+
+    views,
+
+    impressions: null,
 
     reach,
 
@@ -1013,18 +968,15 @@ function normalizeTelegram(post) {
         reach
       ),
 
+    score: null,
+
     /*
-     * Telegram's current canonical structure does not expose a normalized
+     * Telegram's current canonical structure does not expose an explicit
      * approval/voting metric.
      */
     approvalScore: null,
 
     voteConfidence: null,
-
-    sourceLayer:
-      stringOrNull(
-        source.sourceLayer
-      ),
   };
 }
 
@@ -1034,117 +986,39 @@ function normalizeTelegram(post) {
 // ============================================================================
 
 /**
- * Safe fallback for unsupported platforms.
+ * Safe fallback for an unsupported platform.
  *
- * The canonical event is still partially normalized rather than causing
- * the entire processing pipeline to fail.
+ * A single unknown platform does not necessarily need to destroy the entire
+ * processing pipeline.
+ *
+ * The normalized platform is null because the platform is outside the
+ * supported normalized identifiers.
  */
-function normalizeUnknown(post) {
-  const content =
-    objectOrEmpty(post.content);
-
-  const author =
-    objectOrEmpty(post.author);
-
-  const time =
-    objectOrEmpty(post.time);
-
-  const relationships =
-    objectOrEmpty(post.relationships);
-
-  const source =
-    objectOrEmpty(post.source);
+function normalizeUnknown(event) {
+  const result =
+    baseNormalizedEvent(
+      event,
+      null
+    );
 
   return {
-    postId:
-      stringOrNull(
-        post.platformPostId ??
-        post.eventId
-      ),
-
-    platform: null,
-
-    conversationId:
-      stringOrNull(
-        relationships.conversationId
-      ),
-
-    parentId:
-      stringOrNull(
-        relationships.replyToId
-      ),
-
-    authorId:
-      stringOrNull(
-        author.authorId
-      ),
-
-    authorHandle:
-      stringOrNull(
-        author.authorHandle
-      ),
-
-    authorReach: null,
-
-    text:
-      stringOrNull(
-        content.text
-      ),
-
-    title:
-      stringOrNull(
-        content.title
-      ),
-
-    hashtags:
-      normalizeStringArray(
-        content.hashtags
-      ),
-
-    urls:
-      normalizeUrls(
-        content.urls
-      ),
-
-    mentions:
-      normalizeStringArray(
-        content.mentions
-      ),
-
-    language:
-      stringOrNull(
-        content.language
-      ) ??
-      stringOrNull(
-        content.detectedLang
-      ),
-
-    publishedAt:
-      toIsoOrNull(
-        time.publishedAt
-      ),
-
-    observedAt:
-      toIsoOrNull(
-        time.observedAt
-      ),
-
-    velocityWindow: null,
+    ...result,
 
     interactions: null,
+
+    views: null,
+
+    impressions: null,
 
     reach: null,
 
     engagementRate: null,
 
+    score: null,
+
     approvalScore: null,
 
     voteConfidence: null,
-
-    sourceLayer:
-      stringOrNull(
-        source.sourceLayer
-      ),
   };
 }
 
@@ -1156,7 +1030,18 @@ function normalizeUnknown(post) {
 /**
  * Calculate engagement rate safely.
  *
- * Returns null when either interaction count or reach is unavailable.
+ * Engagement rate is only calculated when an actual reach metric exists.
+ *
+ * We deliberately do NOT use:
+ *
+ *   views
+ *   impressions
+ *
+ * as reach.
+ *
+ * @param {number|null} interactions
+ * @param {number|null} reach
+ * @returns {number|null}
  */
 function calculateEngagementRate(
   interactions,
@@ -1175,13 +1060,22 @@ function calculateEngagementRate(
 
 
 /**
- * Sum only available numeric metrics.
+ * Sum only available finite numeric metrics.
  *
  * Examples:
  *
- *   [1, 2, 3]       → 6
- *   [1, null, 3]    → 4
- *   [null, null]    → null
+ *   [1, 2, 3]      → 6
+ *   [1, null, 3]   → 4
+ *   [null, null]   → null
+ *
+ * IMPORTANT:
+ *
+ * This is a DERIVED aggregate.
+ *
+ * It does not modify the source metrics.
+ *
+ * @param {Array<number|null>} values
+ * @returns {number|null}
  */
 function sumAvailable(values) {
   if (!Array.isArray(values)) {
@@ -1191,7 +1085,8 @@ function sumAvailable(values) {
   const available =
     values.filter(
       (value) =>
-        value !== null
+        typeof value === "number" &&
+        Number.isFinite(value)
     );
 
   if (available.length === 0) {
@@ -1213,7 +1108,10 @@ function sumAvailable(values) {
  *
  * IMPORTANT:
  *
- * null does NOT become 0.
+ * null does NOT become zero.
+ *
+ * @param {*} value
+ * @returns {number|null}
  */
 function numOrNull(value) {
   if (
@@ -1234,9 +1132,12 @@ function numOrNull(value) {
 
 
 /**
- * Convert a value into a string.
+ * Convert a value into a non-empty string.
  *
  * Empty strings become null.
+ *
+ * @param {*} value
+ * @returns {string|null}
  */
 function stringOrNull(value) {
   if (
@@ -1263,6 +1164,9 @@ function stringOrNull(value) {
 
 /**
  * Safely access an object.
+ *
+ * @param {*} value
+ * @returns {Object}
  */
 function objectOrEmpty(value) {
   if (
@@ -1285,6 +1189,9 @@ function objectOrEmpty(value) {
  * Normalize a string array.
  *
  * Always returns an array.
+ *
+ * @param {*} value
+ * @returns {string[]}
  */
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) {
@@ -1307,16 +1214,21 @@ function normalizeStringArray(value) {
 /**
  * Normalize canonical URLs.
  *
- * Your scraper can preserve URLs as objects containing information such as:
+ * Canonical URLs may be strings or objects such as:
  *
- *   raw
- *   resolved
- *   domain
- *   resolutionStatus
+ *   {
+ *     raw,
+ *     resolved,
+ *     domain,
+ *     resolutionStatus
+ *   }
  *
- * Therefore URL objects MUST remain objects.
+ * URL objects MUST remain objects.
  *
- * We do not JSON.stringify() the array.
+ * We do NOT JSON.stringify() the array.
+ *
+ * @param {*} value
+ * @returns {Array<string|Object>}
  */
 function normalizeUrls(value) {
   if (!Array.isArray(value)) {
@@ -1352,6 +1264,9 @@ function normalizeUrls(value) {
  *   - Redis Stream IDs
  *
  * Invalid values become null.
+ *
+ * @param {*} value
+ * @returns {string|null}
  */
 function toIsoOrNull(value) {
   if (
@@ -1381,7 +1296,9 @@ function toIsoOrNull(value) {
     Number.isFinite(value)
   ) {
     date =
-      epochToDate(value);
+      epochToDate(
+        value
+      );
   }
 
   // --------------------------------------------------------------------------
@@ -1441,7 +1358,9 @@ function toIsoOrNull(value) {
       )
     ) {
       const numeric =
-        Number(trimmed);
+        Number(
+          trimmed
+        );
 
       if (
         !Number.isFinite(
@@ -1463,7 +1382,9 @@ function toIsoOrNull(value) {
 
     else {
       const parsed =
-        new Date(trimmed);
+        new Date(
+          trimmed
+        );
 
       if (
         !Number.isNaN(
@@ -1497,6 +1418,9 @@ function toIsoOrNull(value) {
  *
  * Values below 1e11 are treated as seconds.
  * Larger values are treated as milliseconds.
+ *
+ * @param {number} value
+ * @returns {Date}
  */
 function epochToDate(value) {
   const milliseconds =
@@ -1515,11 +1439,22 @@ function epochToDate(value) {
 // ============================================================================
 
 /**
- * Calculate elapsed hours between two timestamps.
+ * Calculate elapsed hours between:
  *
- * publishedAt → observedAt
+ *   publishedAt → observedAt
  *
- * Returns null when either timestamp is unavailable.
+ * Returns null when:
+ *
+ *   - either timestamp is unavailable
+ *   - either timestamp is invalid
+ *   - observedAt occurs before publishedAt
+ *
+ * A negative interval is treated as invalid rather than being interpreted as
+ * a negative velocity window.
+ *
+ * @param {string|null} publishedAt
+ * @param {string|null} observedAt
+ * @returns {number|null}
  */
 function hoursBetween(
   publishedAt,
@@ -1549,9 +1484,16 @@ function hoursBetween(
     return null;
   }
 
+  const milliseconds =
+    observed - published;
+
+  if (milliseconds < 0) {
+    return null;
+  }
+
   return (
-    observed - published
-  ) / 3_600_000;
+    milliseconds / 3_600_000
+  );
 }
 
 
@@ -1560,12 +1502,15 @@ function hoursBetween(
 // ============================================================================
 
 /**
- * Extract hashtags from text only when the canonical event did not
- * already provide them.
+ * Extract hashtags from text only when the canonical event did not already
+ * provide them.
  *
- * This is a fallback convenience for downstream analytics.
+ * This is a DERIVED convenience operation.
  *
  * The canonical event itself remains untouched.
+ *
+ * @param {string} text
+ * @returns {string[]}
  */
 function extractHashtags(text) {
   if (
@@ -1601,6 +1546,9 @@ function extractHashtags(text) {
 
 /**
  * Safe JSON serialization for validation errors.
+ *
+ * @param {*} value
+ * @returns {string}
  */
 function safeStringify(value) {
   try {

@@ -9,18 +9,19 @@
  *
  *                         merge-and-save
  *                              │
- *              ┌───────────────┼───────────────┐
- *              │               │               │
- *              ▼               ▼               ▼
- *         Sentiment       Demographic        Trend
- *              │               │               │
- *              └───────────────┼───────────────┘
+ *              ┌───────────────┼────────────────┐
+ *              │               │                │
+ *              ▼               ▼                ▼
+ *         Sentiment       Demographic         Trend
+ *              │               │                │
+ *              └───────────────┼────────────────┘
+ *                              │
  *                              │
  *                              ▼
- *                           Network
- *                              │
- *                              ▼
- *                        DatabaseQueue
+ *                         DatabaseQueue
+ *
+ *         Network is an independent analytics child and also contributes
+ *         its result to DatabaseQueue.
  *
  *
  * IMPORTANT:
@@ -52,6 +53,10 @@ const {
   localSharedRedis,
   pgClient,
 } = require("./config");
+
+const {
+  analyzeBatch,
+} = require("./sentimentAnalysis");
 
 const {
   analyzeTrend,
@@ -107,20 +112,22 @@ function error(worker, message) {
 /**
  * Returns the canonical collection from a job.
  *
- * New Producer/Consumer flow should pass:
+ * Analytics child jobs may receive the canonical collection directly:
  *
  *     job.data = canonical
  *
- * However, the parent Database job may contain:
+ * The Database parent job contains:
  *
  *     job.data.canonical = canonical
  *
- * Supporting both here makes the worker layer tolerant during the transition
+ * Supporting both keeps the worker layer tolerant during the transition
  * between Producer/Consumer implementations.
  */
 function getCanonicalData(job) {
   if (!job?.data || typeof job.data !== "object") {
-    throw new Error("Job data is missing or invalid.");
+    throw new Error(
+      "Job data is missing or invalid."
+    );
   }
 
   if (
@@ -153,7 +160,10 @@ function validateCanonicalData(data) {
     );
   }
 
-  if (data.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
+  if (
+    data.schemaVersion !==
+    SUPPORTED_SCHEMA_VERSION
+  ) {
     throw new Error(
       `Unsupported schemaVersion '${data.schemaVersion}'. ` +
       `Expected '${SUPPORTED_SCHEMA_VERSION}'.`
@@ -281,7 +291,8 @@ function validateCollection(data) {
 
   if (
     data.quality &&
-    typeof data.quality.recordsCollected === "number"
+    typeof data.quality.recordsCollected ===
+    "number"
   ) {
     if (
       data.quality.recordsCollected !==
@@ -313,12 +324,15 @@ function getTrendLabel(data) {
  * Return platform event counts for logging.
  */
 function getPlatformCounts(events) {
-  return events.reduce((counts, event) => {
-    counts[event.platform] =
-      (counts[event.platform] || 0) + 1;
+  return events.reduce(
+    (counts, event) => {
+      counts[event.platform] =
+        (counts[event.platform] || 0) + 1;
 
-    return counts;
-  }, {});
+      return counts;
+    },
+    {}
+  );
 }
 
 // ============================================================================
@@ -329,11 +343,13 @@ const sentimentWorker = new Worker(
   "SentimentQueue",
 
   async (job) => {
-    const data = getCanonicalData(job);
+    const data =
+      getCanonicalData(job);
 
     validateCollection(data);
 
-    const trendLabel = getTrendLabel(data);
+    const trendLabel =
+      getTrendLabel(data);
 
     log(
       "Sentiment",
@@ -342,44 +358,364 @@ const sentimentWorker = new Worker(
       `Run=${data.collection.collectionId}`
     );
 
-    /*
-     * ------------------------------------------------------------------------
-     * SENTIMENT IMPLEMENTATION
-     * ------------------------------------------------------------------------
-     *
-     * Ashutosh's sentiment implementation should go here.
-     *
-     * The important input is:
-     *
-     *     data.events
-     *
-     * Each event is a canonical event.
-     *
-     * Example:
-     *
-     *     for (const event of data.events) {
-     *         const text = event.content?.text;
-     *         ...
-     *     }
-     *
-     * The worker should return an analytics object and should NOT mutate:
-     *
-     *     data.events
-     */
+    // ------------------------------------------------------------------------
+    // Extract text from canonical events
+    // ------------------------------------------------------------------------
+    //
+    // The canonical event remains the source of truth.
+    //
+    // Sentiment analysis receives only the text required by the ML pipeline.
+    //
+    // We keep the original event indexes so that the returned predictions
+    // can later be associated with their canonical event IDs and timestamps.
+    // ------------------------------------------------------------------------
+
+    const textEntries = [];
+
+    for (
+      let index = 0;
+      index < data.events.length;
+      index++
+    ) {
+      const event =
+        data.events[index];
+
+      const text =
+        event.content?.text;
+
+      if (
+        typeof text !== "string" ||
+        !text.trim()
+      ) {
+        continue;
+      }
+
+      textEntries.push({
+        eventIndex: index,
+        eventId: event.eventId,
+        publishedAt:
+          event.time?.publishedAt ?? null,
+        platform: event.platform,
+        text,
+      });
+    }
+
+    log(
+      "Sentiment",
+      `Found ${textEntries.length}/${data.events.length} ` +
+      `events with analyzable text.`
+    );
+
+    // ------------------------------------------------------------------------
+    // No analyzable text
+    // ------------------------------------------------------------------------
+
+    if (textEntries.length === 0) {
+      return {
+        category: "sentiment",
+
+        eventCount:
+          data.events.length,
+
+        analyzedCount: 0,
+
+        results: [],
+
+        summary: {
+          positive: 0,
+          neutral: 0,
+          negative: 0,
+        },
+
+        emotions: {},
+
+        stance: {
+          supportive: 0,
+          against: 0,
+          neutral: 0,
+        },
+
+        sarcasm: {
+          detected: 0,
+          notDetected: 0,
+        },
+
+        tierUsage: {
+          tier1: 0,
+          tier2: 0,
+        },
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // Two-tier sentiment pipeline
+    // ------------------------------------------------------------------------
+    //
+    // Tier 1:
+    //   Local Twitter-RoBERTa classifier.
+    //
+    // Tier 2:
+    //   Hosted LLM for uncertain Tier 1 classifications.
+    //
+    // analyzeBatch() handles the escalation logic.
+    // ------------------------------------------------------------------------
+
+    const predictions =
+      await analyzeBatch(
+        textEntries.map(
+          (entry) => entry.text
+        )
+      );
+
+    if (
+      !Array.isArray(predictions) ||
+      predictions.length !==
+      textEntries.length
+    ) {
+      throw new Error(
+        `Sentiment pipeline returned ` +
+        `${predictions?.length ?? 0} results ` +
+        `for ${textEntries.length} events.`
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // Attach predictions to canonical event identity
+    // ------------------------------------------------------------------------
+    //
+    // We do NOT modify data.events.
+    //
+    // This creates a separate derived analytics representation.
+    // ------------------------------------------------------------------------
+
+    const results = [];
+
+    for (
+      let i = 0;
+      i < textEntries.length;
+      i++
+    ) {
+      const entry =
+        textEntries[i];
+
+      const prediction =
+        predictions[i];
+
+      if (
+        !prediction ||
+        typeof prediction !== "object"
+      ) {
+        continue;
+      }
+
+      results.push({
+        eventId: entry.eventId,
+
+        platform:
+          entry.platform,
+
+        publishedAt:
+          entry.publishedAt,
+
+        polarity:
+          prediction.polarity ?? {
+            label: null,
+            confidence: null,
+          },
+
+        emotions:
+          Array.isArray(
+            prediction.emotions
+          )
+            ? prediction.emotions
+            : [],
+
+        stance:
+          prediction.stance ?? {
+            label: null,
+            confidence: null,
+          },
+
+        sarcasm:
+          prediction.sarcasm ?? {
+            detected: null,
+            confidence: null,
+          },
+
+        tier:
+          prediction.tier ?? null,
+
+        reason:
+          prediction.reason ?? null,
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // Aggregate analytics
+    // ------------------------------------------------------------------------
+
+    const summary = {
+      positive: 0,
+      neutral: 0,
+      negative: 0,
+    };
+
+    const emotions = {};
+
+    const stance = {
+      supportive: 0,
+      against: 0,
+      neutral: 0,
+    };
+
+    const sarcasm = {
+      detected: 0,
+      notDetected: 0,
+    };
+
+    const tierUsage = {
+      tier1: 0,
+      tier2: 0,
+    };
+
+    for (const result of results) {
+      // ----------------------------------------------------------------------
+      // Polarity
+      // ----------------------------------------------------------------------
+
+      const polarity =
+        result.polarity?.label;
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          summary,
+          polarity
+        )
+      ) {
+        summary[polarity]++;
+      }
+
+      // ----------------------------------------------------------------------
+      // Emotions
+      // ----------------------------------------------------------------------
+
+      if (
+        Array.isArray(
+          result.emotions
+        )
+      ) {
+        for (
+          const emotion of result.emotions
+        ) {
+          if (
+            !emotion?.label
+          ) {
+            continue;
+          }
+
+          emotions[emotion.label] =
+            (emotions[emotion.label] || 0) +
+            1;
+        }
+      }
+
+      // ----------------------------------------------------------------------
+      // Stance
+      // ----------------------------------------------------------------------
+
+      const stanceLabel =
+        result.stance?.label;
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          stance,
+          stanceLabel
+        )
+      ) {
+        stance[stanceLabel]++;
+      }
+
+      // ----------------------------------------------------------------------
+      // Sarcasm
+      // ----------------------------------------------------------------------
+
+      if (
+        result.sarcasm?.detected ===
+        true
+      ) {
+        sarcasm.detected++;
+      } else if (
+        result.sarcasm?.detected ===
+        false
+      ) {
+        sarcasm.notDetected++;
+      }
+
+      // ----------------------------------------------------------------------
+      // Tier usage
+      // ----------------------------------------------------------------------
+
+      if (
+        result.tier === 1
+      ) {
+        tierUsage.tier1++;
+      } else if (
+        result.tier === 2
+      ) {
+        tierUsage.tier2++;
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Platform summary
+    // ------------------------------------------------------------------------
+
+    const platformCounts =
+      getPlatformCounts(
+        data.events
+      );
+
+    // ------------------------------------------------------------------------
+    // Final derived sentiment result
+    // ------------------------------------------------------------------------
 
     const result = {
       category: "sentiment",
 
-      // Placeholder until the actual sentiment implementation is connected.
-      result: null,
-      score: null,
+      eventCount:
+        data.events.length,
 
-      eventCount: data.events.length,
+      analyzedCount:
+        results.length,
+
+      unanalyzedCount:
+        data.events.length -
+        results.length,
+
+      platformCounts,
+
+      summary,
+
+      emotions,
+
+      stance,
+
+      sarcasm,
+
+      tierUsage,
+
+      /*
+       * Individual event-level results are retained so downstream timeline
+       * analysis can associate sentiment/emotion changes with publishedAt.
+       */
+      results,
     };
 
     success(
       "Sentiment",
-      `Processed ${data.events.length} events.`
+      `Processed ${results.length}/${data.events.length} events | ` +
+      `Tier1=${tierUsage.tier1} | ` +
+      `Tier2=${tierUsage.tier2}`
     );
 
     return result;
@@ -396,11 +732,13 @@ const demographicWorker = new Worker(
   "DemographicQueue",
 
   async (job) => {
-    const data = getCanonicalData(job);
+    const data =
+      getCanonicalData(job);
 
     validateCollection(data);
 
-    const trendLabel = getTrendLabel(data);
+    const trendLabel =
+      getTrendLabel(data);
 
     const profiles =
       Array.isArray(data.authorProfiles)
@@ -438,8 +776,11 @@ const demographicWorker = new Worker(
       topAge: null,
       topRegion: null,
 
-      eventCount: data.events.length,
-      profilesAvailable: profiles.length,
+      eventCount:
+        data.events.length,
+
+      profilesAvailable:
+        profiles.length,
     };
 
     success(
@@ -461,11 +802,13 @@ const trendWorker = new Worker(
   "TrendQueue",
 
   async (job) => {
-    const data = getCanonicalData(job);
+    const data =
+      getCanonicalData(job);
 
     validateCollection(data);
 
-    const trendLabel = getTrendLabel(data);
+    const trendLabel =
+      getTrendLabel(data);
 
     log(
       "Trend",
@@ -495,9 +838,13 @@ const trendWorker = new Worker(
      * without modifying the canonical events.
      */
 
-    const result = analyzeTrend(data);
+    const result =
+      analyzeTrend(data);
 
-    if (!result || typeof result !== "object") {
+    if (
+      !result ||
+      typeof result !== "object"
+    ) {
       throw new Error(
         "analyzeTrend() returned an invalid result."
       );
@@ -507,12 +854,6 @@ const trendWorker = new Worker(
      * ------------------------------------------------------------------------
      * GLOBAL TREND REGISTRY
      * ------------------------------------------------------------------------
-     *
-     * recordTrendStats() stores the current trend state in the shared Redis
-     * registry.
-     *
-     * enrichWithGlobalRanking() then compares this trend against the other
-     * tracked trends.
      */
 
     await recordTrendStats(
@@ -548,13 +889,6 @@ const trendWorker = new Worker(
       );
     }
 
-    /*
-     * The enriched result is returned to the parent DatabaseQueue.
-     *
-     * This is derived analytics data.
-     * The canonical collection itself is NOT replaced.
-     */
-
     return enriched;
   },
 
@@ -569,11 +903,13 @@ const networkWorker = new Worker(
   "NetworkQueue",
 
   async (job) => {
-    const data = getCanonicalData(job);
+    const data =
+      getCanonicalData(job);
 
     validateCollection(data);
 
-    const trendLabel = getTrendLabel(data);
+    const trendLabel =
+      getTrendLabel(data);
 
     log(
       "Network",
@@ -599,9 +935,13 @@ const networkWorker = new Worker(
      * from canonical event relationships and author information.
      */
 
-    const result = analyzeNetwork(data);
+    const result =
+      analyzeNetwork(data);
 
-    if (!result || typeof result !== "object") {
+    if (
+      !result ||
+      typeof result !== "object"
+    ) {
       throw new Error(
         "analyzeNetwork() returned an invalid result."
       );
@@ -643,7 +983,10 @@ const databaseWorker = new Worker(
   "DatabaseQueue",
 
   async (job) => {
-    if (!job?.data || typeof job.data !== "object") {
+    if (
+      !job?.data ||
+      typeof job.data !== "object"
+    ) {
       throw new Error(
         "Database job data is missing or invalid."
       );
@@ -668,9 +1011,6 @@ const databaseWorker = new Worker(
      *     canonical: data
      *
      * to the parent job.
-     *
-     * This keeps the Database worker self-contained and allows it to retain
-     * the original canonical events.
      */
 
     const canonical =
@@ -682,7 +1022,9 @@ const databaseWorker = new Worker(
       );
     }
 
-    validateCollection(canonical);
+    validateCollection(
+      canonical
+    );
 
     const resolvedRunId =
       runId ??
@@ -713,26 +1055,21 @@ const databaseWorker = new Worker(
       await job.getChildrenValues();
 
     const rawValues =
-      Object.values(childResults);
+      Object.values(
+        childResults
+      );
 
     /*
      * ------------------------------------------------------------------------
      * Structure Analytics
      * ------------------------------------------------------------------------
-     *
-     * Child workers return:
-     *
-     * {
-     *     category: "trend",
-     *     ...
-     * }
-     *
-     * The category is used as the key in the final analytics object.
      */
 
     const analytics = {};
 
-    for (const result of rawValues) {
+    for (
+      const result of rawValues
+    ) {
       if (
         !result ||
         typeof result !== "object"
@@ -749,7 +1086,16 @@ const databaseWorker = new Worker(
         ...resultData
       } = result;
 
-      analytics[category] = resultData;
+      if (
+        analytics[category]
+      ) {
+        throw new Error(
+          `Duplicate analytics category '${category}'.`
+        );
+      }
+
+      analytics[category] =
+        resultData;
     }
 
     /*
@@ -757,17 +1103,33 @@ const databaseWorker = new Worker(
      * Database Record
      * ------------------------------------------------------------------------
      *
-     * The canonical events are preserved separately from derived analytics.
+     * Preserve the COMPLETE canonical collection rather than only events.
+     *
+     * This keeps:
+     *
+     *   collection
+     *   trend
+     *   platforms
+     *   events
+     *   authorProfiles
+     *   communities
+     *   quality
+     *
+     * available for provenance and future analysis.
      */
 
     const databaseRecord = {
-      run_id: resolvedRunId,
+      run_id:
+        resolvedRunId,
 
-      trend_label: resolvedTrendLabel,
+      trend_label:
+        resolvedTrendLabel,
 
-      schema_version: resolvedSchemaVersion,
+      schema_version:
+        resolvedSchemaVersion,
 
-      canonical_events: canonical.events,
+      canonical_collection:
+        canonical,
 
       analytics,
     };
@@ -777,18 +1139,16 @@ const databaseWorker = new Worker(
      * PostgreSQL Persistence
      * ------------------------------------------------------------------------
      *
-     * The actual INSERT can be enabled once the PostgreSQL table is ready.
+     * Enable the INSERT once the PostgreSQL table is ready.
      *
-     * Recommended shape:
+     * Recommended table:
      *
-     *     run_id
-     *     trend_label
-     *     schema_version
-     *     canonical_events JSONB
-     *     analytics JSONB
-     *
-     * Do NOT flatten the canonical events back into the previous legacy
-     * database structure.
+     *     run_id TEXT PRIMARY KEY
+     *     trend_label TEXT NOT NULL
+     *     schema_version TEXT NOT NULL
+     *     canonical_collection JSONB NOT NULL
+     *     analytics JSONB NOT NULL
+     *     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
      */
 
     /*
@@ -799,17 +1159,18 @@ const databaseWorker = new Worker(
      *       run_id,
      *       trend_label,
      *       schema_version,
-     *       canonical_events,
+     *       canonical_collection,
      *       analytics
      *   )
      *   VALUES ($1, $2, $3, $4, $5)
+     *   ON CONFLICT (run_id) DO NOTHING
      * `;
      *
      * await pgClient.query(query, [
      *   databaseRecord.run_id,
      *   databaseRecord.trend_label,
      *   databaseRecord.schema_version,
-     *   JSON.stringify(databaseRecord.canonical_events),
+     *   JSON.stringify(databaseRecord.canonical_collection),
      *   JSON.stringify(databaseRecord.analytics),
      * ]);
      */
@@ -829,9 +1190,11 @@ const databaseWorker = new Worker(
     return {
       status: "success",
 
-      runId: resolvedRunId,
+      runId:
+        resolvedRunId,
 
-      trend_label: resolvedTrendLabel,
+      trend_label:
+        resolvedTrendLabel,
 
       eventCount:
         canonical.events.length,
@@ -860,27 +1223,38 @@ const workers = [
 // Worker Event Handling
 // ============================================================================
 
-for (const worker of workers) {
-  worker.on("completed", (job) => {
-    success(
-      worker.name,
-      `Job ${job.id} completed.`
-    );
-  });
+for (
+  const worker of workers
+) {
+  worker.on(
+    "completed",
+    (job) => {
+      success(
+        worker.name,
+        `Job ${job.id} completed.`
+      );
+    }
+  );
 
-  worker.on("failed", (job, err) => {
-    error(
-      worker.name,
-      `Job ${job?.id ?? "unknown"} failed: ${err.message}`
-    );
-  });
+  worker.on(
+    "failed",
+    (job, err) => {
+      error(
+        worker.name,
+        `Job ${job?.id ?? "unknown"} failed: ${err.message}`
+      );
+    }
+  );
 
-  worker.on("error", (err) => {
-    error(
-      worker.name,
-      `Worker error: ${err.message}`
-    );
-  });
+  worker.on(
+    "error",
+    (err) => {
+      error(
+        worker.name,
+        `Worker error: ${err.message}`
+      );
+    }
+  );
 }
 
 // ============================================================================
@@ -897,13 +1271,15 @@ async function shutdown(signal) {
   shuttingDown = true;
 
   console.log(
-    `\nReceived ${signal}. Shutting down BullMQ workers...`
+    `\nReceived ${signal}. ` +
+    `Shutting down BullMQ workers...`
   );
 
   try {
     await Promise.all(
-      workers.map((worker) =>
-        worker.close()
+      workers.map(
+        (worker) =>
+          worker.close()
       )
     );
 
@@ -919,16 +1295,16 @@ async function shutdown(signal) {
   }
 
   /*
-   * pgClient is imported for the eventual PostgreSQL persistence layer.
+   * pgClient is imported for the PostgreSQL persistence layer.
    *
-   * Only close it here if it is an actual pg.Client instance that this
-   * process owns.
+   * Only close it here if this process owns the connection.
    */
 
   try {
     if (
       pgClient &&
-      typeof pgClient.end === "function"
+      typeof pgClient.end ===
+      "function"
     ) {
       await pgClient.end();
 
