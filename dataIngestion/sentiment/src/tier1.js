@@ -39,7 +39,7 @@
 // resulting tensor shape BEFORE calling the model.
 //
 // ============================================================================
-
+import 'dotenv/config';
 import {
   AutoTokenizer,
   AutoModelForSequenceClassification,

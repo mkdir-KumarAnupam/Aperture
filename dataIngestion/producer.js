@@ -959,9 +959,9 @@ async function orchestrateData() {
     await acknowledgeMessages(
       entryIds
     );
-    // await deleteMessages(
-    //   entryIds
-    // );
+    await deleteMessages(
+      entryIds
+    );
 
     // ------------------------------------------------------------------------
     // Summary
