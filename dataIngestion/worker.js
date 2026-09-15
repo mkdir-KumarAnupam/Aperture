@@ -944,6 +944,27 @@ function createNetworkWorker() {
        * The current 0-node / 0-edge analytical result will be addressed
        * separately.
        */
+
+      console.log(
+        "[Network DEBUG] schema:",
+        data?.schemaVersion
+      );
+
+      console.log(
+        "[Network DEBUG] events:",
+        data?.events?.length
+      );
+
+      console.log(
+        "[Network DEBUG] first event:",
+        JSON.stringify(
+          data?.events?.[0],
+          null,
+          2
+        )
+      );
+
+
       const result =
         analyzeNetwork(data);
 
