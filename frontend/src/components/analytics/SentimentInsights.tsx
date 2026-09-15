@@ -10,7 +10,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { TrendAnalytics } from "@/data/types";
+import { GlobalTimeframe, TrendAnalytics } from "@/data/types";
+import { getTimeframeSentiment } from "@/data/timeframeAdapters";
 
 const SENTIMENT_COLORS = {
   positive: "#10B981", // Green
@@ -48,46 +49,51 @@ function CompactWaffle({
   );
 }
 
-export default function SentimentInsights({ trend }: { trend: TrendAnalytics }) {
-  const { timeline, breakdown } = trend.sentiment;
-
-  // Derive polarity index score out of 5.0 (no emojis)
-  const polarityScore = useMemo(() => {
-    const raw = (breakdown.positive * 5 + breakdown.neutral * 3 + breakdown.negative * 1) / 100;
-    return raw.toFixed(1);
-  }, [breakdown]);
+export default function SentimentInsights({
+  trend,
+  timeframe = "30D",
+}: {
+  trend: TrendAnalytics;
+  timeframe?: GlobalTimeframe;
+}) {
+  const { timeline, breakdown, polarityScore } = useMemo(
+    () => getTimeframeSentiment(trend, timeframe),
+    [trend, timeframe]
+  );
 
   return (
-    <section id="section-sentiment" className="w-full">
-      {/* ── Single Unified Parent Card (Exact Reference Spec) ────────────── */}
-      <div className="report-card p-6 sm:p-7">
-        {/* Unified Card Header */}
-        <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
-              Sentiment Analysis
-            </h2>
-            <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-blue-50 text-[#2563EB] border border-blue-100 tracking-wider">
-              NLP-DERIVED
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 text-right">
-            <span className="text-xs text-slate-400 font-medium hidden sm:inline">Polarity Index</span>
-            <div className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/80 text-xs font-bold text-[#0F172A]">
-              <span className="text-sm font-black">{polarityScore}</span>
-              <span className="text-slate-400 font-medium"> / 5.0</span>
-            </div>
-          </div>
+    <section
+      id="section-sentiment"
+      className="w-full border-b border-slate-200/80 px-6 sm:px-10 lg:px-12 py-6 flex flex-col justify-center"
+      style={{ minHeight: "40vh" }}
+    >
+      {/* Section Header */}
+      <div className="flex items-center justify-between pb-3 mb-4">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
+            Sentiment Analysis
+          </h2>
+          <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-blue-50 text-[#2563EB] border border-blue-100 tracking-wider">
+            NLP-DERIVED
+          </span>
         </div>
 
-        {/* ── Inner 70 / 30 Layout ────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-8 items-center">
-          {/* ── Left 70%: Sentiment Over Time Line Graph ──────────────────── */}
-          <div className="flex flex-col justify-between">
-            <div className="mb-2">
-              <h3 className="text-base font-bold text-[#0F172A]">Sentiment Over Time</h3>
-            </div>
+        <div className="flex items-center gap-2 text-right">
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline">Polarity Index</span>
+          <div className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-bold text-[#0F172A]">
+            <span className="text-sm font-black">{polarityScore}</span>
+            <span className="text-slate-400 font-medium"> / 5.0</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Inner 70 / 30 Layout ────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[65fr_35fr] gap-8 xl:gap-12 items-center">
+        {/* ── Left 65%: Sentiment Over Time Line Graph ──────────────────── */}
+        <div className="flex flex-col justify-between">
+          <div className="mb-2">
+            <h3 className="text-sm font-bold text-[#0F172A]">Sentiment Over Time</h3>
+          </div>
 
             <div className="w-full h-[220px] sm:h-[240px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -239,7 +245,6 @@ export default function SentimentInsights({ trend }: { trend: TrendAnalytics }) 
             </div>
           </div>
         </div>
-      </div>
     </section>
   );
 }

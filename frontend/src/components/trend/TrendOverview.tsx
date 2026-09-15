@@ -1,78 +1,99 @@
 "use client";
 
-import { TrendAnalytics } from "@/data/types";
+import { GlobalTimeframe, TrendAnalytics } from "@/data/types";
+import { getTimeframeOverview } from "@/data/timeframeAdapters";
 
 interface TrendOverviewProps {
   trend: TrendAnalytics;
+  timeframe?: GlobalTimeframe;
 }
 
-export default function TrendOverview({ trend }: TrendOverviewProps) {
+const REPORT_PERIODS: Record<GlobalTimeframe, string> = {
+  "6H": "Sep 5, 2024 · 12:00 – 18:00",
+  "1D": "Sep 4 – Sep 5, 2024",
+  "7D": "Aug 30 – Sep 5, 2024",
+  "30D": "Aug 6, 2024 – Sep 5, 2024",
+};
+
+export default function TrendOverview({ trend, timeframe = "30D" }: TrendOverviewProps) {
+  const overview = getTimeframeOverview(trend, timeframe);
+  const reportPeriod = REPORT_PERIODS[timeframe] ?? REPORT_PERIODS["30D"];
+
   return (
-    <section id="section-overview" className="w-full">
-      <div className="report-card p-6 sm:p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-8 items-center">
-          {/* ── 70% Left: Editorial Trend Summary ─────────────────────────── */}
-          <div className="flex flex-col justify-center">
-            {/* Header: Label + Active Trend Pill */}
-            <div className="flex items-center gap-2.5 mb-2.5">
-              <span className="text-sm font-bold text-[#0F172A]">Trend Overview</span>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE]">
-                {trend.name}
-              </span>
-            </div>
+    <section
+      id="section-overview"
+      className="w-full border-b border-slate-200/80 px-6 sm:px-10 lg:px-12 py-8 flex flex-col justify-center"
+      style={{ minHeight: "40vh" }}
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-[6fr_4fr] gap-8 xl:gap-12 items-center">
+        {/* ── Left: Editorial Trend Summary ─────────────────────────── */}
+        <div className="flex flex-col justify-center">
+          <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase mb-1">
+            TREND REPORT
+          </span>
 
-            {/* Huge Trend Title */}
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#0F172A] tracking-tight leading-tight mb-3">
-              {trend.name}
-            </h1>
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#0F172A] tracking-tight leading-tight mb-3">
+            {trend.name}
+          </h1>
 
-            {/* Full-width Natural Description */}
-            <p className="text-sm sm:text-[15px] text-slate-600 leading-relaxed max-w-none">
-              {trend.description}
-            </p>
+          <p className="text-sm sm:text-[14px] text-slate-600 leading-relaxed max-w-2xl">
+            {trend.description}
+          </p>
+        </div>
+
+        {/* ── Right: Report Period & Three Metrics ──────────────────── */}
+        <div className="flex flex-col justify-between h-full py-1">
+          {/* Top: Report Period (Right aligned) */}
+          <div className="text-right mb-4">
+            <span className="text-[11px] font-semibold text-slate-400 block">
+              Report Period
+            </span>
+            <span className="text-xs font-bold text-slate-700">
+              {reportPeriod}
+            </span>
           </div>
 
-          {/* ── 30% Right: Exactly Three Compact Metrics ──────────────────── */}
-          <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+          {/* Bottom: 3 Metrics Horizontally */}
+          <div className="grid grid-cols-3 gap-4 sm:gap-6 pt-2">
             {/* Metric 1: Total Mentions */}
-            <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 sm:p-4 flex flex-col justify-between shadow-2xs hover:border-slate-300 transition-colors">
-              <span className="text-[11px] sm:text-xs font-medium text-slate-500 whitespace-nowrap">
+            <div className="flex flex-col">
+              <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-[#0F172A] tracking-tight leading-none mb-1 tabular-nums">
+                {overview.totalMentions}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 mb-1">
                 Total Mentions
               </span>
-              <div className="text-xl sm:text-2xl xl:text-3xl font-black text-[#0F172A] my-1.5 tabular-nums">
-                {trend.totalMentions}
-              </div>
-              <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-emerald-600">
+              <div className="flex items-center gap-1 text-xs font-bold text-emerald-600">
                 <span>↑</span>
-                <span>+22%</span>
+                <span>{overview.mentionsChange} vs previous period</span>
               </div>
             </div>
 
             {/* Metric 2: Total Reach */}
-            <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 sm:p-4 flex flex-col justify-between shadow-2xs hover:border-slate-300 transition-colors">
-              <span className="text-[11px] sm:text-xs font-medium text-slate-500 whitespace-nowrap">
+            <div className="flex flex-col">
+              <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-[#0F172A] tracking-tight leading-none mb-1 tabular-nums">
+                {overview.approximateReach}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 mb-1">
                 Total Reach
               </span>
-              <div className="text-xl sm:text-2xl xl:text-3xl font-black text-[#0F172A] my-1.5 tabular-nums">
-                {trend.approximateReach}
-              </div>
-              <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-emerald-600">
+              <div className="flex items-center gap-1 text-xs font-bold text-emerald-600">
                 <span>↑</span>
-                <span>+18%</span>
+                <span>{overview.reachChange} vs previous period</span>
               </div>
             </div>
 
             {/* Metric 3: Trend Growth % */}
-            <div className="bg-white border border-slate-200/90 rounded-xl p-3.5 sm:p-4 flex flex-col justify-between shadow-2xs hover:border-slate-300 transition-colors">
-              <span className="text-[11px] sm:text-xs font-medium text-slate-500 whitespace-nowrap">
+            <div className="flex flex-col">
+              <span className="text-2xl sm:text-3xl xl:text-4xl font-black text-[#0F172A] tracking-tight leading-none mb-1 tabular-nums">
+                {overview.growthPercent}
+              </span>
+              <span className="text-xs font-semibold text-slate-500 mb-1">
                 Trend Growth
               </span>
-              <div className="text-xl sm:text-2xl xl:text-3xl font-black text-emerald-600 my-1.5 tabular-nums">
-                {trend.growthPercent}
-              </div>
-              <div className="text-[10px] sm:text-[11px] font-medium text-slate-400 truncate">
-                vs previous period
-              </div>
+              <span className="text-xs font-medium text-slate-400">
+                {overview.periodLabel}
+              </span>
             </div>
           </div>
         </div>

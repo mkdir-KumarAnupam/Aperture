@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { TrendAnalytics } from "@/data/types";
+import { GlobalTimeframe, TrendAnalytics } from "@/data/types";
 import { useMemo, useRef, useCallback, useState, useEffect } from "react";
 import type { ForceGraphMethods } from "react-force-graph-2d";
 
@@ -64,7 +64,13 @@ interface ForceGraphLink {
   value?: number;
 }
 
-export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
+export function InfluenceTrendCard({
+  trend,
+  timeframe = "30D",
+}: {
+  trend: TrendAnalytics;
+  timeframe?: GlobalTimeframe;
+}) {
   const hoveredNodeRef = useRef<string | null>(null);
   const [, forceRender] = useState(0);
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -93,9 +99,40 @@ export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
     return () => observer.disconnect();
   }, []);
 
+  // Filter nodes & edges by timeframe window
+  const activeNodeCount =
+    timeframe === "6H"
+      ? Math.max(6, Math.round(nodes.length * 0.55))
+      : timeframe === "1D"
+      ? Math.max(8, Math.round(nodes.length * 0.75))
+      : timeframe === "7D"
+      ? Math.max(10, Math.round(nodes.length * 0.9))
+      : nodes.length;
+
+  const filteredNodes = useMemo(() => {
+    return [...nodes]
+      .sort((a, b) => b.influence - a.influence)
+      .slice(0, activeNodeCount);
+  }, [nodes, activeNodeCount]);
+
+  const filteredNodeIds = useMemo(
+    () => new Set(filteredNodes.map((n) => n.id)),
+    [filteredNodes]
+  );
+
+  const filteredEdges = useMemo(
+    () =>
+      edges.filter(
+        (e) =>
+          filteredNodeIds.has(e.source as string) &&
+          filteredNodeIds.has(e.target as string)
+      ),
+    [edges, filteredNodeIds]
+  );
+
   // Build graph data for react-force-graph-2d
   const graphData = useMemo(() => ({
-    nodes: nodes.map((n) => ({
+    nodes: filteredNodes.map((n) => ({
       id: n.id,
       label: n.label,
       platform: n.platform,
@@ -104,12 +141,12 @@ export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
       val: Math.pow(n.influence / 36, 2),
       color: COMMUNITY_COLORS[n.community] ?? "#3B82F6",
     })),
-    links: edges.map((e) => ({
+    links: filteredEdges.map((e) => ({
       source: e.source,
       target: e.target,
       value: e.strength,
     })),
-  }), [nodes, edges]);
+  }), [filteredNodes, filteredEdges]);
 
   const configureForces = useCallback(() => {
     const graph = fgRef.current;
@@ -153,12 +190,9 @@ export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
         ctx.strokeStyle = "#FFFFFF";
         ctx.lineWidth = 2.5;
         ctx.stroke();
-      }
 
-      // Label for top nodes or on hover
-      if (node.influence >= 80 || isHovered) {
         const label = node.label;
-        ctx.font = `${isHovered ? "bold " : ""}${Math.max(8, 10 / globalScale)}px Inter, sans-serif`;
+        ctx.font = `bold ${Math.max(10, 12 / globalScale)}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = "#0F172A";
@@ -175,20 +209,20 @@ export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
   }, []);
 
   return (
-    <div className="report-card p-5 sm:p-6 flex flex-col justify-between h-full relative overflow-hidden">
+    <div className="flex flex-col justify-between h-full relative w-full">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
           Influence Trend
         </h2>
-        <span className="text-[11px] font-semibold text-slate-400 bg-slate-50 border border-slate-200/80 px-2 py-0.5 rounded-full">
+        <span className="text-xs font-semibold text-slate-500 bg-white border border-slate-200 px-3 py-0.5 rounded-full shadow-2xs">
           Cluster Network
         </span>
       </div>
 
       <div
         ref={containerRef}
-        className="relative flex-1 w-full rounded-xl overflow-hidden my-auto"
-        style={{ minHeight: 380, height: "100%" }}
+        className="relative flex-1 w-full overflow-hidden my-auto"
+        style={{ minHeight: 460, height: "100%" }}
       >
         <ForceGraph2D
           ref={fgRef}
@@ -206,11 +240,6 @@ export function InfluenceTrendCard({ trend }: { trend: TrendAnalytics }) {
           onEngineTick={handleEngineTick}
           onEngineStop={handleEngineStop}
         />
-      </div>
-
-      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-        <span>Force-directed propagation graph</span>
-        <span className="font-semibold text-slate-600">{nodes.length} Key Voices</span>
       </div>
     </div>
   );

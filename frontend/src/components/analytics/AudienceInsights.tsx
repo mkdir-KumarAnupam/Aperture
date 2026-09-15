@@ -13,12 +13,13 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { TrendAnalytics } from "@/data/types";
+import { GlobalTimeframe, TrendAnalytics } from "@/data/types";
+import { getTimeframeDemographics } from "@/data/timeframeAdapters";
 import { PlatformIcon } from "@/components/ui/SectionHeader";
 
 const LANG_COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#94A3B8"];
 
-export type GlobalTimeframe = "6H" | "1D" | "7D" | "30D";
+export type { GlobalTimeframe };
 
 interface AudienceInsightsProps {
   trend: TrendAnalytics;
@@ -26,28 +27,11 @@ interface AudienceInsightsProps {
 }
 
 export default function AudienceInsights({ trend, timeframe }: AudienceInsightsProps) {
-  // ── 1. Age Distribution (No gender data) ──────────────────────────────────
-  const ageData = useMemo(() => {
-    return [
-      { range: "13–17", share: 12 },
-      { range: "18–24", share: 28 },
-      { range: "25–34", share: 32 },
-      { range: "35–44", share: 20 },
-      { range: "45+",   share: 8 },
-    ];
-  }, []);
-
-  // ── 2. Language Distribution ──────────────────────────────────────────────
-  const langData = useMemo(() => {
-    return [
-      { language: "Hindi",   share: 42 },
-      { language: "English", share: 28 },
-      { language: "Bengali", share: 8 },
-      { language: "Tamil",   share: 6 },
-      { language: "Telugu",  share: 6 },
-      { language: "Others",  share: 10 },
-    ];
-  }, []);
+  // ── 1. Demographics responding to timeframe ────────────────────────────────
+  const { ageData, langData, coreAge } = useMemo(
+    () => getTimeframeDemographics(timeframe),
+    [timeframe]
+  );
 
   // ── 3. Platform Growth Sparklines responding to Header Timeframe ───────────
   const platformData = useMemo(() => {
@@ -94,21 +78,22 @@ export default function AudienceInsights({ trend, timeframe }: AudienceInsightsP
   }, [timeframe, trend]);
 
   return (
-    <section id="section-demographics" className="w-full">
-      <div
-        className="grid grid-cols-1 lg:grid-cols-[4fr_6fr] gap-6 items-stretch"
-        style={{ minHeight: "clamp(340px, 38vh, 440px)" }}
-      >
-        {/* ── 40% Left: Demographics (Age + Language Side-by-Side) ────────── */}
-        <div className="report-card p-5 sm:p-6 flex flex-col justify-between h-full">
-          <div className="mb-2">
+    <section
+      id="section-demographics"
+      className="w-full px-6 sm:px-10 lg:px-12 py-8 flex flex-col justify-center"
+      style={{ minHeight: "40vh" }}
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 xl:gap-12 items-stretch">
+        {/* ── 50% Left: Demographics (Age + Language Side-by-Side) ────────── */}
+        <div className="flex flex-col justify-between h-full">
+          <div className="mb-3">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
               Demographics
             </h2>
           </div>
 
-          {/* 2 Visualizations Side by Side inside Demographics Card */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-auto items-center">
+          {/* 2 Visualizations Side by Side inside Demographics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 my-auto items-center">
             {/* 1. Age Distribution */}
             <div className="flex flex-col">
               <span className="text-xs font-bold text-slate-700 mb-2">
@@ -186,16 +171,11 @@ export default function AudienceInsights({ trend, timeframe }: AudienceInsightsP
               </div>
             </div>
           </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-            <span>Verified cross-platform demographic signals</span>
-            <span className="font-semibold text-slate-600">Core: 18–34</span>
-          </div>
         </div>
 
-        {/* ── 60% Right: Platform Trend Growth (No Timeframe Pills here!) ─── */}
-        <div className="report-card p-5 sm:p-6 flex flex-col justify-between h-full">
-          <div className="mb-2">
+        {/* ── 50% Right: Platform Trend Growth ───────────────────────────── */}
+        <div className="flex flex-col justify-between h-full">
+          <div className="mb-3">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
               Platform Trend Growth
             </h2>
@@ -304,11 +284,6 @@ export default function AudienceInsights({ trend, timeframe }: AudienceInsightsP
                 <span className="font-bold text-blue-600">Channel Reach</span>
               </div>
             </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-            <span>Platform curves synchronized to {timeframe} window</span>
-            <span className="font-semibold text-slate-600">Primary driver: {trend.fastestPlatform.toUpperCase()}</span>
           </div>
         </div>
       </div>

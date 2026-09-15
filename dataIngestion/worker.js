@@ -27,20 +27,18 @@ const {
   createBullMQConnection,
   localSharedRedis,
   pgClient,
+  connectPostgres,
+  checkPostgres,
 } = require("./config");
 
-const {
-  analyzeTrend,
-} = require("./trendAnalysis");
+const { analyzeTrend } = require("./trendAnalysis");
 
 const {
   recordTrendStats,
   enrichWithGlobalRanking,
 } = require("./trendGlobalStats");
 
-const {
-  analyzeNetwork,
-} = require("./networkAnalysis");
+const { analyzeNetwork } = require("./networkAnalysis");
 
 // ============================================================================
 // Configuration
@@ -79,24 +77,18 @@ let analyzeBatch = null;
 async function loadSentimentPipeline() {
   console.log("[Startup] Loading sentiment pipeline...");
 
-  const sentimentPipeline =
-    await import("./sentiment/src/pipeline.js");
+  const sentimentPipeline = await import("./sentiment/src/pipeline.js");
 
   if (
     !sentimentPipeline ||
     typeof sentimentPipeline.analyzeBatch !== "function"
   ) {
-    throw new Error(
-      "Sentiment pipeline does not export analyzeBatch()."
-    );
+    throw new Error("Sentiment pipeline does not export analyzeBatch().");
   }
 
-  analyzeBatch =
-    sentimentPipeline.analyzeBatch;
+  analyzeBatch = sentimentPipeline.analyzeBatch;
 
-  console.log(
-    "[Startup] Sentiment pipeline loaded successfully."
-  );
+  console.log("[Startup] Sentiment pipeline loaded successfully.");
 }
 
 // ============================================================================
@@ -132,9 +124,7 @@ function error(worker, message) {
  */
 function getCanonicalData(job) {
   if (!job?.data || typeof job.data !== "object") {
-    throw new Error(
-      "Job data is missing or invalid."
-    );
+    throw new Error("Job data is missing or invalid.");
   }
 
   /*
@@ -151,16 +141,11 @@ function getCanonicalData(job) {
   /*
    * Database parent job.
    */
-  if (
-    job.data.canonical &&
-    typeof job.data.canonical === "object"
-  ) {
+  if (job.data.canonical && typeof job.data.canonical === "object") {
     return job.data.canonical;
   }
 
-  throw new Error(
-    "Canonical collection not found in job data."
-  );
+  throw new Error("Canonical collection not found in job data.");
 }
 
 // ============================================================================
@@ -169,18 +154,13 @@ function getCanonicalData(job) {
 
 function validateCanonicalData(data) {
   if (!data || typeof data !== "object") {
-    throw new Error(
-      "Canonical data is missing or invalid."
-    );
+    throw new Error("Canonical data is missing or invalid.");
   }
 
-  if (
-    data.schemaVersion !==
-    SUPPORTED_SCHEMA_VERSION
-  ) {
+  if (data.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
     throw new Error(
       `Unsupported schemaVersion '${data.schemaVersion}'. ` +
-      `Expected '${SUPPORTED_SCHEMA_VERSION}'.`
+        `Expected '${SUPPORTED_SCHEMA_VERSION}'.`,
     );
   }
 
@@ -189,54 +169,33 @@ function validateCanonicalData(data) {
     typeof data.collection !== "object" ||
     !data.collection.collectionId
   ) {
-    throw new Error(
-      "Missing collection.collectionId."
-    );
+    throw new Error("Missing collection.collectionId.");
   }
 
-  if (
-    !data.trend ||
-    typeof data.trend !== "object"
-  ) {
-    throw new Error(
-      "Missing canonical trend object."
-    );
+  if (!data.trend || typeof data.trend !== "object") {
+    throw new Error("Missing canonical trend object.");
   }
 
   if (!Array.isArray(data.events)) {
-    throw new Error(
-      "Canonical events must be an array."
-    );
+    throw new Error("Canonical events must be an array.");
   }
 
   if (
     data.authorProfiles !== undefined &&
     !Array.isArray(data.authorProfiles)
   ) {
-    throw new Error(
-      "Canonical authorProfiles must be an array."
-    );
+    throw new Error("Canonical authorProfiles must be an array.");
   }
 
-  if (
-    data.communities !== undefined &&
-    !Array.isArray(data.communities)
-  ) {
-    throw new Error(
-      "Canonical communities must be an array."
-    );
+  if (data.communities !== undefined && !Array.isArray(data.communities)) {
+    throw new Error("Canonical communities must be an array.");
   }
 
   if (
     data.platforms !== undefined &&
-    (
-      typeof data.platforms !== "object" ||
-      Array.isArray(data.platforms)
-    )
+    (typeof data.platforms !== "object" || Array.isArray(data.platforms))
   ) {
-    throw new Error(
-      "Canonical platforms must be an object."
-    );
+    throw new Error("Canonical platforms must be an object.");
   }
 
   return true;
@@ -247,46 +206,30 @@ function validateEvents(events) {
 
   for (const event of events) {
     if (!event || typeof event !== "object") {
-      throw new Error(
-        "Canonical events contain an invalid event."
-      );
+      throw new Error("Canonical events contain an invalid event.");
     }
 
     if (!event.eventId) {
-      throw new Error(
-        "Canonical event is missing eventId."
-      );
+      throw new Error("Canonical event is missing eventId.");
     }
 
     if (!event.platform) {
-      throw new Error(
-        `Event '${event.eventId}' is missing platform.`
-      );
+      throw new Error(`Event '${event.eventId}' is missing platform.`);
     }
 
     if (!event.platformPostId) {
-      throw new Error(
-        `Event '${event.eventId}' is missing platformPostId.`
-      );
+      throw new Error(`Event '${event.eventId}' is missing platformPostId.`);
     }
 
-    if (
-      ![
-        "x",
-        "reddit",
-        "telegram",
-      ].includes(event.platform)
-    ) {
+    if (!["x", "reddit", "telegram"].includes(event.platform)) {
       throw new Error(
         `Unsupported platform '${event.platform}' ` +
-        `for event '${event.eventId}'.`
+          `for event '${event.eventId}'.`,
       );
     }
 
     if (eventIds.has(event.eventId)) {
-      throw new Error(
-        `Duplicate eventId '${event.eventId}'.`
-      );
+      throw new Error(`Duplicate eventId '${event.eventId}'.`);
     }
 
     eventIds.add(event.eventId);
@@ -299,18 +242,12 @@ function validateCollection(data) {
   validateCanonicalData(data);
   validateEvents(data.events);
 
-  if (
-    data.quality &&
-    typeof data.quality.recordsCollected === "number"
-  ) {
-    if (
-      data.quality.recordsCollected !==
-      data.events.length
-    ) {
+  if (data.quality && typeof data.quality.recordsCollected === "number") {
+    if (data.quality.recordsCollected !== data.events.length) {
       throw new Error(
         `Collection accounting mismatch: ` +
-        `quality.recordsCollected=${data.quality.recordsCollected}, ` +
-        `events.length=${data.events.length}.`
+          `quality.recordsCollected=${data.quality.recordsCollected}, ` +
+          `events.length=${data.events.length}.`,
       );
     }
   }
@@ -323,23 +260,15 @@ function validateCollection(data) {
 // ============================================================================
 
 function getTrendLabel(data) {
-  return (
-    data?.trend?.label ??
-    data?.trend?.query ??
-    "unknown"
-  );
+  return data?.trend?.label ?? data?.trend?.query ?? "unknown";
 }
 
 function getPlatformCounts(events) {
-  return events.reduce(
-    (counts, event) => {
-      counts[event.platform] =
-        (counts[event.platform] || 0) + 1;
+  return events.reduce((counts, event) => {
+    counts[event.platform] = (counts[event.platform] || 0) + 1;
 
-      return counts;
-    },
-    {}
-  );
+    return counts;
+  }, {});
 }
 
 // ============================================================================
@@ -348,9 +277,7 @@ function getPlatformCounts(events) {
 
 function createSentimentWorker() {
   if (typeof analyzeBatch !== "function") {
-    throw new Error(
-      "Sentiment pipeline has not been loaded."
-    );
+    throw new Error("Sentiment pipeline has not been loaded.");
   }
 
   /*
@@ -368,23 +295,20 @@ function createSentimentWorker() {
     async (job) => {
       const startedAt = Date.now();
 
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
-      const runId =
-        data.collection.collectionId;
+      const runId = data.collection.collectionId;
 
       log(
         "Sentiment",
         `START job=${job.id} | ` +
-        `events=${data.events.length} | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${runId}`
+          `events=${data.events.length} | ` +
+          `Trend=${trendLabel} | ` +
+          `Run=${runId}`,
       );
 
       // ----------------------------------------------------------------------
@@ -393,45 +317,32 @@ function createSentimentWorker() {
 
       const textEntries = [];
 
-      for (
-        let index = 0;
-        index < data.events.length;
-        index++
-      ) {
-        const event =
-          data.events[index];
+      for (let index = 0; index < data.events.length; index++) {
+        const event = data.events[index];
 
-        const text =
-          event.content?.text;
+        const text = event.content?.text;
 
-        if (
-          typeof text !== "string" ||
-          !text.trim()
-        ) {
+        if (typeof text !== "string" || !text.trim()) {
           continue;
         }
 
         textEntries.push({
           eventIndex: index,
 
-          eventId:
-            event.eventId,
+          eventId: event.eventId,
 
-          publishedAt:
-            event.time?.publishedAt ?? null,
+          publishedAt: event.time?.publishedAt ?? null,
 
-          platform:
-            event.platform,
+          platform: event.platform,
 
-          text:
-            text.trim(),
+          text: text.trim(),
         });
       }
 
       log(
         "Sentiment",
         `Found ${textEntries.length}/${data.events.length} ` +
-        `events with analyzable text.`
+          `events with analyzable text.`,
       );
 
       // ----------------------------------------------------------------------
@@ -442,16 +353,13 @@ function createSentimentWorker() {
         const emptyResult = {
           category: "sentiment",
 
-          eventCount:
-            data.events.length,
+          eventCount: data.events.length,
 
           analyzedCount: 0,
 
-          unanalyzedCount:
-            data.events.length,
+          unanalyzedCount: data.events.length,
 
-          platformCounts:
-            getPlatformCounts(data.events),
+          platformCounts: getPlatformCounts(data.events),
 
           results: [],
 
@@ -483,8 +391,8 @@ function createSentimentWorker() {
         success(
           "Sentiment",
           `DONE job=${job.id} | ` +
-          `0/${data.events.length} analyzed | ` +
-          `No analyzable text.`
+            `0/${data.events.length} analyzed | ` +
+            `No analyzable text.`,
         );
 
         return emptyResult;
@@ -496,15 +404,12 @@ function createSentimentWorker() {
 
       log(
         "Sentiment",
-        `Sending ${textEntries.length} texts to sentiment pipeline...`
+        `Sending ${textEntries.length} texts to sentiment pipeline...`,
       );
 
-      const predictions =
-        await analyzeBatch(
-          textEntries.map(
-            (entry) => entry.text
-          )
-        );
+      const predictions = await analyzeBatch(
+        textEntries.map((entry) => entry.text),
+      );
 
       if (
         !Array.isArray(predictions) ||
@@ -512,15 +417,14 @@ function createSentimentWorker() {
       ) {
         throw new Error(
           `Sentiment pipeline returned ` +
-          `${predictions?.length ?? 0} results ` +
-          `for ${textEntries.length} events.`
+            `${predictions?.length ?? 0} results ` +
+            `for ${textEntries.length} events.`,
         );
       }
 
       log(
         "Sentiment",
-        `Sentiment pipeline returned ` +
-        `${predictions.length} predictions.`
+        `Sentiment pipeline returned ` + `${predictions.length} predictions.`,
       );
 
       // ----------------------------------------------------------------------
@@ -529,64 +433,44 @@ function createSentimentWorker() {
 
       const results = [];
 
-      for (
-        let i = 0;
-        i < textEntries.length;
-        i++
-      ) {
-        const entry =
-          textEntries[i];
+      for (let i = 0; i < textEntries.length; i++) {
+        const entry = textEntries[i];
 
-        const prediction =
-          predictions[i];
+        const prediction = predictions[i];
 
-        if (
-          !prediction ||
-          typeof prediction !== "object"
-        ) {
+        if (!prediction || typeof prediction !== "object") {
           continue;
         }
 
         results.push({
-          eventId:
-            entry.eventId,
+          eventId: entry.eventId,
 
-          platform:
-            entry.platform,
+          platform: entry.platform,
 
-          publishedAt:
-            entry.publishedAt,
+          publishedAt: entry.publishedAt,
 
-          polarity:
-            prediction.polarity ?? {
-              label: null,
-              confidence: null,
-            },
+          polarity: prediction.polarity ?? {
+            label: null,
+            confidence: null,
+          },
 
-          emotions:
-            Array.isArray(
-              prediction.emotions
-            )
-              ? prediction.emotions
-              : [],
+          emotions: Array.isArray(prediction.emotions)
+            ? prediction.emotions
+            : [],
 
-          stance:
-            prediction.stance ?? {
-              label: null,
-              confidence: null,
-            },
+          stance: prediction.stance ?? {
+            label: null,
+            confidence: null,
+          },
 
-          sarcasm:
-            prediction.sarcasm ?? {
-              detected: null,
-              confidence: null,
-            },
+          sarcasm: prediction.sarcasm ?? {
+            detected: null,
+            confidence: null,
+          },
 
-          tier:
-            prediction.tier ?? null,
+          tier: prediction.tier ?? null,
 
-          reason:
-            prediction.reason ?? null,
+          reason: prediction.reason ?? null,
         });
       }
 
@@ -619,52 +503,31 @@ function createSentimentWorker() {
       };
 
       for (const result of results) {
-        const polarity =
-          result.polarity?.label;
+        const polarity = result.polarity?.label;
 
-        if (
-          Object.prototype.hasOwnProperty.call(
-            summary,
-            polarity
-          )
-        ) {
+        if (Object.prototype.hasOwnProperty.call(summary, polarity)) {
           summary[polarity]++;
         }
 
-        if (
-          Array.isArray(result.emotions)
-        ) {
-          for (
-            const emotion of result.emotions
-          ) {
+        if (Array.isArray(result.emotions)) {
+          for (const emotion of result.emotions) {
             if (!emotion?.label) {
               continue;
             }
 
-            emotions[emotion.label] =
-              (emotions[emotion.label] || 0) + 1;
+            emotions[emotion.label] = (emotions[emotion.label] || 0) + 1;
           }
         }
 
-        const stanceLabel =
-          result.stance?.label;
+        const stanceLabel = result.stance?.label;
 
-        if (
-          Object.prototype.hasOwnProperty.call(
-            stance,
-            stanceLabel
-          )
-        ) {
+        if (Object.prototype.hasOwnProperty.call(stance, stanceLabel)) {
           stance[stanceLabel]++;
         }
 
-        if (
-          result.sarcasm?.detected === true
-        ) {
+        if (result.sarcasm?.detected === true) {
           sarcasm.detected++;
-        } else if (
-          result.sarcasm?.detected === false
-        ) {
+        } else if (result.sarcasm?.detected === false) {
           sarcasm.notDetected++;
         }
 
@@ -676,24 +539,50 @@ function createSentimentWorker() {
       }
 
       // ----------------------------------------------------------------------
+      // CALCULATE OVERALL TREND SENTIMENT
+      // ----------------------------------------------------------------------
+
+      let overallSentiment = "unknown";
+      const totalAnalyzed = results.length;
+
+      if (totalAnalyzed > 0) {
+        const { positive, negative, neutral } = summary;
+
+        // 1. Check for "Mixed" sentiment (Highly polarized)
+        // If positive and negative are both high, and the difference between them
+        // is small (e.g., less than 15% of total volume), we call it "mixed".
+        const difference = Math.abs(positive - negative);
+        const isPolarized =
+          positive > 0 &&
+          negative > 0 &&
+          difference / totalAnalyzed < 0.15 &&
+          positive + negative > neutral; // Opinions outweigh neutral statements
+
+        if (isPolarized) {
+          overallSentiment = "mixed";
+        } else {
+          // 2. Otherwise, find the simple majority (the highest count)
+          overallSentiment = Object.keys(summary).reduce((a, b) =>
+            summary[a] > summary[b] ? a : b,
+          );
+        }
+      }
+
+      // ----------------------------------------------------------------------
       // Final result
       // ----------------------------------------------------------------------
 
       const finalResult = {
         category: "sentiment",
+        trendLabel: trendLabel,
+        overallSentiment: overallSentiment,
+        eventCount: data.events.length,
 
-        eventCount:
-          data.events.length,
+        analyzedCount: results.length,
 
-        analyzedCount:
-          results.length,
+        unanalyzedCount: data.events.length - results.length,
 
-        unanalyzedCount:
-          data.events.length -
-          results.length,
-
-        platformCounts:
-          getPlatformCounts(data.events),
+        platformCounts: getPlatformCounts(data.events),
 
         summary,
 
@@ -708,28 +597,25 @@ function createSentimentWorker() {
         results,
       };
 
-      const duration =
-        Date.now() - startedAt;
+      const duration = Date.now() - startedAt;
 
       success(
         "Sentiment",
         `DONE job=${job.id} | ` +
-        `${results.length}/${data.events.length} analyzed | ` +
-        `Tier1=${tierUsage.tier1} | ` +
-        `Tier2=${tierUsage.tier2} | ` +
-        `${duration}ms`
+          `${results.length}/${data.events.length} analyzed | ` +
+          `Tier1=${tierUsage.tier1} | ` +
+          `Tier2=${tierUsage.tier2} | ` +
+          `${duration}ms`,
       );
 
       return finalResult;
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        SENTIMENT_CONCURRENCY,
-    }
+      concurrency: SENTIMENT_CONCURRENCY,
+    },
   );
 }
 
@@ -742,24 +628,21 @@ function createDemographicWorker() {
     "DemographicQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
-      const profiles =
-        Array.isArray(data.authorProfiles)
-          ? data.authorProfiles
-          : [];
+      const profiles = Array.isArray(data.authorProfiles)
+        ? data.authorProfiles
+        : [];
 
       log(
         "Demographic",
         `Processing ${data.events.length} events | ` +
-        `Profiles=${profiles.length} | ` +
-        `Trend=${trendLabel}`
+          `Profiles=${profiles.length} | ` +
+          `Trend=${trendLabel}`,
       );
 
       /*
@@ -782,28 +665,21 @@ function createDemographicWorker() {
 
         topRegion: null,
 
-        eventCount:
-          data.events.length,
+        eventCount: data.events.length,
 
-        profilesAvailable:
-          profiles.length,
+        profilesAvailable: profiles.length,
       };
 
-      success(
-        "Demographic",
-        `Processed ${data.events.length} events.`
-      );
+      success("Demographic", `Processed ${data.events.length} events.`);
 
       return result;
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
-    }
+      concurrency: ANALYTICS_CONCURRENCY,
+    },
   );
 }
 
@@ -816,75 +692,58 @@ function createTrendWorker() {
     "TrendQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
-
+      const data = getCanonicalData(job);
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
       log(
         "Trend",
         `Processing ${data.events.length} events | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${data.collection.collectionId}`
+          `Trend=${trendLabel} | ` +
+          `Run=${data.collection.collectionId}`,
       );
 
       // ----------------------------------------------------------------------
       // Local trend analysis
       // ----------------------------------------------------------------------
 
-      const result =
-        analyzeTrend(data);
+      const result = analyzeTrend(data);
 
-      if (
-        !result ||
-        typeof result !== "object"
-      ) {
-        throw new Error(
-          "analyzeTrend() returned an invalid result."
-        );
+      if (!result || typeof result !== "object") {
+        throw new Error("analyzeTrend() returned an invalid result.");
       }
 
       // ----------------------------------------------------------------------
       // Global trend statistics
       // ----------------------------------------------------------------------
 
-      await recordTrendStats(
-        localSharedRedis,
-        result
-      );
+      await recordTrendStats(localSharedRedis, result);
 
-      const enriched =
-        await enrichWithGlobalRanking(
-          localSharedRedis,
-          result
-        );
+      const enriched = await enrichWithGlobalRanking(localSharedRedis, result);
 
       // ----------------------------------------------------------------------
       // Logging
       // ----------------------------------------------------------------------
 
-      const ranking =
-        enriched.globalRanking;
+      const ranking = enriched.globalRanking;
 
       if (ranking) {
         log(
           "Trend",
           `${enriched.name ?? trendLabel}: ` +
-          `score=${enriched.trendScore ?? "n/a"} ` +
-          `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
-          `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
-          `${ranking.totalTrackedTrends ?? "n/a"} ` +
-          `(top ${ranking.percentile ?? "n/a"}%) ` +
-          `${ranking.tierMovement ?? "stable"}`
+            `score=${enriched.trendScore ?? "n/a"} ` +
+            `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
+            `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
+            `${ranking.totalTrackedTrends ?? "n/a"} ` +
+            `(top ${ranking.percentile ?? "n/a"}%) ` +
+            `${ranking.tierMovement ?? "stable"}`,
         );
       } else {
         log(
           "Trend",
           `${enriched.name ?? trendLabel}: ` +
-          `trend analysis completed without global ranking.`
+            `trend analysis completed without global ranking.`,
         );
       }
 
@@ -896,12 +755,10 @@ function createTrendWorker() {
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
-    }
+      concurrency: ANALYTICS_CONCURRENCY,
+    },
   );
 }
 
@@ -914,19 +771,17 @@ function createNetworkWorker() {
     "NetworkQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
       log(
         "Network",
         `Processing ${data.events.length} events | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${data.collection.collectionId}`
+          `Trend=${trendLabel} | ` +
+          `Run=${data.collection.collectionId}`,
       );
 
       /*
@@ -944,59 +799,24 @@ function createNetworkWorker() {
        * The current 0-node / 0-edge analytical result will be addressed
        * separately.
        */
+      const result = analyzeNetwork(data);
 
-      console.log(
-        "[Network DEBUG] schema:",
-        data?.schemaVersion
-      );
-
-      console.log(
-        "[Network DEBUG] events:",
-        data?.events?.length
-      );
-
-      console.log(
-        "[Network DEBUG] first event:",
-        JSON.stringify(
-          data?.events?.[0],
-          null,
-          2
-        )
-      );
-
-
-      const result =
-        analyzeNetwork(data);
-
-      if (
-        !result ||
-        typeof result !== "object"
-      ) {
-        throw new Error(
-          "analyzeNetwork() returned an invalid result."
-        );
+      if (!result || typeof result !== "object") {
+        throw new Error("analyzeNetwork() returned an invalid result.");
       }
 
-      const nodeCount =
-        Array.isArray(result.nodes)
-          ? result.nodes.length
-          : 0;
+      const nodeCount = Array.isArray(result.nodes) ? result.nodes.length : 0;
 
-      const edgeCount =
-        Array.isArray(result.edges)
-          ? result.edges.length
-          : 0;
+      const edgeCount = Array.isArray(result.edges) ? result.edges.length : 0;
 
-      const topInfluencer =
-        result.topInfluencers?.[0]?.label ??
-        "none";
+      const topInfluencer = result.topInfluencers?.[0]?.label ?? "none";
 
       log(
         "Network",
         `${trendLabel}: ` +
-        `${nodeCount} nodes, ` +
-        `${edgeCount} edges, ` +
-        `top=${topInfluencer}`
+          `${nodeCount} nodes, ` +
+          `${edgeCount} edges, ` +
+          `top=${topInfluencer}`,
       );
 
       return {
@@ -1007,12 +827,10 @@ function createNetworkWorker() {
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
-    }
+      concurrency: ANALYTICS_CONCURRENCY,
+    },
   );
 }
 
@@ -1029,32 +847,16 @@ function createDatabaseWorker() {
       // Validate database parent job
       // ----------------------------------------------------------------------
 
-      if (
-        !job?.data ||
-        typeof job.data !== "object"
-      ) {
-        throw new Error(
-          "Database job data is missing or invalid."
-        );
+      if (!job?.data || typeof job.data !== "object") {
+        throw new Error("Database job data is missing or invalid.");
       }
 
-      const {
-        trend_label,
-        runId,
-        eventIds,
-        schemaVersion,
-      } = job.data;
+      const { trend_label, runId, eventIds, schemaVersion } = job.data;
 
-      const canonical =
-        job.data.canonical;
+      const canonical = job.data.canonical;
 
-      if (
-        !canonical ||
-        typeof canonical !== "object"
-      ) {
-        throw new Error(
-          "Database job is missing canonical collection."
-        );
+      if (!canonical || typeof canonical !== "object") {
+        throw new Error("Database job is missing canonical collection.");
       }
 
       validateCollection(canonical);
@@ -1063,35 +865,26 @@ function createDatabaseWorker() {
       // Resolve canonical metadata
       // ----------------------------------------------------------------------
 
-      const resolvedRunId =
-        runId ??
-        canonical.collection.collectionId;
+      const resolvedRunId = runId ?? canonical.collection.collectionId;
 
-      const resolvedTrendLabel =
-        trend_label ??
-        getTrendLabel(canonical);
+      const resolvedTrendLabel = trend_label ?? getTrendLabel(canonical);
 
-      const resolvedSchemaVersion =
-        schemaVersion ??
-        canonical.schemaVersion;
+      const resolvedSchemaVersion = schemaVersion ?? canonical.schemaVersion;
 
       log(
         "Database",
         `Gathering results | ` +
-        `Trend=${resolvedTrendLabel} | ` +
-        `Run=${resolvedRunId}`
+          `Trend=${resolvedTrendLabel} | ` +
+          `Run=${resolvedRunId}`,
       );
 
       // ----------------------------------------------------------------------
       // Optional event ID validation
       // ----------------------------------------------------------------------
 
-      if (
-        eventIds !== undefined &&
-        !Array.isArray(eventIds)
-      ) {
+      if (eventIds !== undefined && !Array.isArray(eventIds)) {
         throw new Error(
-          "Database job eventIds must be an array when provided."
+          "Database job eventIds must be an array when provided.",
         );
       }
 
@@ -1101,8 +894,8 @@ function createDatabaseWorker() {
       ) {
         throw new Error(
           `Database event accounting mismatch: ` +
-          `eventIds=${eventIds.length}, ` +
-          `canonical.events=${canonical.events.length}.`
+            `eventIds=${eventIds.length}, ` +
+            `canonical.events=${canonical.events.length}.`,
         );
       }
 
@@ -1110,16 +903,11 @@ function createDatabaseWorker() {
       // Collect child results
       // ----------------------------------------------------------------------
 
-      const childResults =
-        await job.getChildrenValues();
+      const childResults = await job.getChildrenValues();
 
-      const rawValues =
-        Object.values(childResults);
+      const rawValues = Object.values(childResults);
 
-      log(
-        "Database",
-        `Received ${rawValues.length} child result(s).`
-      );
+      log("Database", `Received ${rawValues.length} child result(s).`);
 
       // ----------------------------------------------------------------------
       // Validate child result count
@@ -1142,14 +930,11 @@ function createDatabaseWorker() {
         "network",
       ];
 
-      if (
-        rawValues.length !==
-        EXPECTED_ANALYTICS_CATEGORIES.length
-      ) {
+      if (rawValues.length !== EXPECTED_ANALYTICS_CATEGORIES.length) {
         throw new Error(
           `Database expected ` +
-          `${EXPECTED_ANALYTICS_CATEGORIES.length} child results ` +
-          `but received ${rawValues.length}.`
+            `${EXPECTED_ANALYTICS_CATEGORIES.length} child results ` +
+            `but received ${rawValues.length}.`,
         );
       }
 
@@ -1160,74 +945,50 @@ function createDatabaseWorker() {
       const analytics = {};
 
       for (const result of rawValues) {
-        if (
-          !result ||
-          typeof result !== "object"
-        ) {
-          throw new Error(
-            "Database received an invalid child result."
-          );
+        if (!result || typeof result !== "object") {
+          throw new Error("Database received an invalid child result.");
         }
 
         if (!result.category) {
-          throw new Error(
-            "Database received a child result without category."
-          );
+          throw new Error("Database received a child result without category.");
         }
 
-        const {
-          category,
-          ...resultData
-        } = result;
+        const { category, ...resultData } = result;
 
-        if (
-          !EXPECTED_ANALYTICS_CATEGORIES.includes(
-            category
-          )
-        ) {
-          throw new Error(
-            `Unexpected analytics category '${category}'.`
-          );
+        if (!EXPECTED_ANALYTICS_CATEGORIES.includes(category)) {
+          throw new Error(`Unexpected analytics category '${category}'.`);
         }
 
         if (analytics[category]) {
-          throw new Error(
-            `Duplicate analytics category '${category}'.`
-          );
+          throw new Error(`Duplicate analytics category '${category}'.`);
         }
 
         analytics[category] = resultData;
-        console.log(category);
-        console.log(resultData);
+        // console.log(category);
+        // console.log(resultData);
       }
 
       // ----------------------------------------------------------------------
       // Verify every expected category exists
       // ----------------------------------------------------------------------
 
-      const missingCategories =
-        EXPECTED_ANALYTICS_CATEGORIES.filter(
-          (category) =>
-            !Object.prototype.hasOwnProperty.call(
-              analytics,
-              category
-            )
-        );
+      const missingCategories = EXPECTED_ANALYTICS_CATEGORIES.filter(
+        (category) =>
+          !Object.prototype.hasOwnProperty.call(analytics, category),
+      );
 
       if (missingCategories.length > 0) {
         throw new Error(
           `Database is missing child analytics: ` +
-          `${missingCategories.join(", ")}`
+            `${missingCategories.join(", ")}`,
         );
       }
 
-      const analyticsCategories =
-        Object.keys(analytics);
+      const analyticsCategories = Object.keys(analytics);
 
       log(
         "Database",
-        `Analytics categories: ` +
-        `${analyticsCategories.join(", ")}`
+        `Analytics categories: ` + `${analyticsCategories.join(", ")}`,
       );
 
       // ----------------------------------------------------------------------
@@ -1237,18 +998,18 @@ function createDatabaseWorker() {
       log(
         "Database",
         `Child result validation: ` +
-        `sentiment=${Boolean(analytics.sentiment)}, ` +
-        `demographic=${Boolean(analytics.demographic)}, ` +
-        `trend=${Boolean(analytics.trend)}, ` +
-        `network=${Boolean(analytics.network)}`
+          `sentiment=${Boolean(analytics.sentiment)}, ` +
+          `demographic=${Boolean(analytics.demographic)}, ` +
+          `trend=${Boolean(analytics.trend)}, ` +
+          `network=${Boolean(analytics.network)}`,
       );
 
       log(
         "Database",
         `Canonical validation: ` +
-        `schema=${resolvedSchemaVersion} | ` +
-        `events=${canonical.events.length} | ` +
-        `run=${resolvedRunId}`
+          `schema=${resolvedSchemaVersion} | ` +
+          `events=${canonical.events.length} | ` +
+          `run=${resolvedRunId}`,
       );
 
       // ----------------------------------------------------------------------
@@ -1256,17 +1017,13 @@ function createDatabaseWorker() {
       // ----------------------------------------------------------------------
 
       const databaseRecord = {
-        run_id:
-          resolvedRunId,
+        run_id: resolvedRunId,
 
-        trend_label:
-          resolvedTrendLabel,
+        trend_label: resolvedTrendLabel,
 
-        schema_version:
-          resolvedSchemaVersion,
+        schema_version: resolvedSchemaVersion,
 
-        canonical_collection:
-          canonical,
+        canonical_collection: canonical,
 
         analytics,
       };
@@ -1278,9 +1035,7 @@ function createDatabaseWorker() {
         !databaseRecord.canonical_collection ||
         !databaseRecord.analytics
       ) {
-        throw new Error(
-          "Database record construction failed."
-        );
+        throw new Error("Database record construction failed.");
       }
 
       // It is full established but for now i have not pushed it, i will push it after some testing
@@ -1300,49 +1055,68 @@ function createDatabaseWorker() {
        *     analytics JSONB
        *     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
        *     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-      */
+       */
 
-      // const query = `
-      //   INSERT INTO trend_analytics (
-      //     run_id,
-      //     trend_label,
-      //     schema_version,
-      //     canonical_collection,
-      //     analytics
-      //   )
-      //   VALUES ($1, $2, $3, $4, $5)
-      //   ON CONFLICT (run_id)
-      //   DO UPDATE SET
-      //     trend_label = EXCLUDED.trend_label,
-      //     schema_version = EXCLUDED.schema_version,
-      //     canonical_collection = EXCLUDED.canonical_collection,
-      //     analytics = EXCLUDED.analytics,
-      //     updated_at = CURRENT_TIMESTAMP
-      // `;
+      const isHealthy = await checkPostgres();
 
-      // await pgClient.query(query, [
-      //   databaseRecord.run_id,
-      //   databaseRecord.trend_label,
-      //   databaseRecord.schema_version,
-      //   JSON.stringify(databaseRecord.canonical_collection),
-      //   JSON.stringify(databaseRecord.analytics),
-      // ]);
+      if (!isHealthy) {
+        log("Database", "PostgreSQL connection stale — reconnecting...");
+        await connectPostgres();
+      }
+
+      const query = `
+        INSERT INTO trend_analytics (
+          run_id,
+          trend_label,
+          schema_version,
+          canonical_collection,
+          analytics
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (run_id)
+        DO UPDATE SET
+          trend_label = EXCLUDED.trend_label,
+          schema_version = EXCLUDED.schema_version,
+          canonical_collection = EXCLUDED.canonical_collection,
+          analytics = EXCLUDED.analytics,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+
+      const QUERY_TIMEOUT_MS = 10_000;
+
+      await Promise.race([
+        pgClient.query(query, [
+          databaseRecord.run_id,
+          databaseRecord.trend_label,
+          databaseRecord.schema_version,
+          JSON.stringify(databaseRecord.canonical_collection),
+          JSON.stringify(databaseRecord.analytics),
+        ]),
+        new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `PostgreSQL query timed out after ${QUERY_TIMEOUT_MS}ms`,
+                ),
+              ),
+            QUERY_TIMEOUT_MS,
+          ),
+        ),
+      ]);
 
       log(
         "Database",
         `Prepared record | ` +
-        `Events=${canonical.events.length} | ` +
-        `Analytics=${analyticsCategories.join(", ")}`
+          `Events=${canonical.events.length} | ` +
+          `Analytics=${analyticsCategories.join(", ")}`,
       );
 
-      log(
-        "Database",
-        `Record validation: PASS`
-      );
+      log("Database", `Record validation: PASS`);
 
       success(
         "Database",
-        `Collection ${resolvedRunId} processed successfully.`
+        `Collection ${resolvedRunId} processed successfully.`,
       );
 
       // ----------------------------------------------------------------------
@@ -1352,32 +1126,25 @@ function createDatabaseWorker() {
       return {
         status: "success",
 
-        runId:
-          resolvedRunId,
+        runId: resolvedRunId,
 
-        trend_label:
-          resolvedTrendLabel,
+        trend_label: resolvedTrendLabel,
 
-        schemaVersion:
-          resolvedSchemaVersion,
+        schemaVersion: resolvedSchemaVersion,
 
-        eventCount:
-          canonical.events.length,
+        eventCount: canonical.events.length,
 
         analyticsCategories,
 
-        persistence:
-          "prepared",
+        persistence: "prepared",
       };
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        DATABASE_CONCURRENCY,
-    }
+      concurrency: DATABASE_CONCURRENCY,
+    },
   );
 }
 
@@ -1392,35 +1159,17 @@ let workers = [];
 // ============================================================================
 
 function registerWorkerEvents(worker) {
-  worker.on(
-    "completed",
-    (job) => {
-      success(
-        worker.name,
-        `Job ${job.id} completed.`
-      );
-    }
-  );
+  worker.on("completed", (job) => {
+    success(worker.name, `Job ${job.id} completed.`);
+  });
 
-  worker.on(
-    "failed",
-    (job, err) => {
-      error(
-        worker.name,
-        `Job ${job?.id ?? "unknown"} failed: ${err.message}`
-      );
-    }
-  );
+  worker.on("failed", (job, err) => {
+    error(worker.name, `Job ${job?.id ?? "unknown"} failed: ${err.message}`);
+  });
 
-  worker.on(
-    "error",
-    (err) => {
-      error(
-        worker.name,
-        `Worker error: ${err.message}`
-      );
-    }
-  );
+  worker.on("error", (err) => {
+    error(worker.name, `Worker error: ${err.message}`);
+  });
 }
 
 // ============================================================================
@@ -1435,24 +1184,21 @@ async function startWorkers() {
 
     await loadSentimentPipeline();
 
+    await connectPostgres();
+
     // ------------------------------------------------------------------------
     // Create workers
     // ------------------------------------------------------------------------
 
-    const sentimentWorker =
-      createSentimentWorker();
+    const sentimentWorker = createSentimentWorker();
 
-    const demographicWorker =
-      createDemographicWorker();
+    const demographicWorker = createDemographicWorker();
 
-    const trendWorker =
-      createTrendWorker();
+    const trendWorker = createTrendWorker();
 
-    const networkWorker =
-      createNetworkWorker();
+    const networkWorker = createNetworkWorker();
 
-    const databaseWorker =
-      createDatabaseWorker();
+    const databaseWorker = createDatabaseWorker();
 
     workers = [
       sentimentWorker,
@@ -1474,74 +1220,39 @@ async function startWorkers() {
     // Startup information
     // ------------------------------------------------------------------------
 
-    console.log(
-      "\n========================================"
-    );
+    console.log("\n========================================");
 
-    console.log(
-      "BullMQ workers are online."
-    );
+    console.log("BullMQ workers are online.");
 
-    console.log(
-      "========================================"
-    );
+    console.log("========================================");
 
-    console.log(
-      `Schema: ${SUPPORTED_SCHEMA_VERSION}`
-    );
+    console.log(`Schema: ${SUPPORTED_SCHEMA_VERSION}`);
 
-    console.log(
-      "Queues:"
-    );
+    console.log("Queues:");
 
-    console.log(
-      `  - SentimentQueue      concurrency=${SENTIMENT_CONCURRENCY}`
-    );
+    console.log(`  - SentimentQueue      concurrency=${SENTIMENT_CONCURRENCY}`);
 
-    console.log(
-      `  - DemographicQueue    concurrency=${ANALYTICS_CONCURRENCY}`
-    );
+    console.log(`  - DemographicQueue    concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - TrendQueue          concurrency=${ANALYTICS_CONCURRENCY}`
-    );
+    console.log(`  - TrendQueue          concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - NetworkQueue        concurrency=${ANALYTICS_CONCURRENCY}`
-    );
+    console.log(`  - NetworkQueue        concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - DatabaseQueue       concurrency=${DATABASE_CONCURRENCY}`
-    );
+    console.log(`  - DatabaseQueue       concurrency=${DATABASE_CONCURRENCY}`);
 
-    console.log(
-      "Sentiment: loaded"
-    );
+    console.log("Sentiment: loaded");
 
-    console.log(
-      "Database: aggregation enabled"
-    );
+    console.log("Database: aggregation enabled");
 
-    console.log(
-      "PostgreSQL persistence: not enabled"
-    );
+    console.log("PostgreSQL persistence: not enabled");
 
-    console.log(
-      "========================================\n"
-    );
-
+    console.log("========================================\n");
   } catch (err) {
-    console.error(
-      "\n========================================"
-    );
+    console.error("\n========================================");
 
-    console.error(
-      "FAILED TO START BULLMQ WORKERS"
-    );
+    console.error("FAILED TO START BULLMQ WORKERS");
 
-    console.error(
-      "========================================"
-    );
+    console.error("========================================");
 
     console.error(err);
 
@@ -1562,61 +1273,32 @@ async function shutdown(signal) {
 
   shuttingDown = true;
 
-  console.log(
-    `\nReceived ${signal}. ` +
-    `Shutting down BullMQ workers...`
-  );
+  console.log(`\nReceived ${signal}. ` + `Shutting down BullMQ workers...`);
 
   try {
-    await Promise.all(
-      workers.map(
-        (worker) =>
-          worker.close()
-      )
-    );
+    await Promise.all(workers.map((worker) => worker.close()));
 
-    success(
-      "Shutdown",
-      "All BullMQ workers closed."
-    );
+    success("Shutdown", "All BullMQ workers closed.");
   } catch (err) {
-    error(
-      "Shutdown",
-      `Failed to close workers cleanly: ${err.message}`
-    );
+    error("Shutdown", `Failed to close workers cleanly: ${err.message}`);
   }
 
   try {
-    if (
-      pgClient &&
-      typeof pgClient.end === "function"
-    ) {
+    if (pgClient && typeof pgClient.end === "function") {
       await pgClient.end();
 
-      success(
-        "Shutdown",
-        "PostgreSQL connection closed."
-      );
+      success("Shutdown", "PostgreSQL connection closed.");
     }
   } catch (err) {
-    error(
-      "Shutdown",
-      `Failed to close PostgreSQL connection: ${err.message}`
-    );
+    error("Shutdown", `Failed to close PostgreSQL connection: ${err.message}`);
   }
 
   process.exit(0);
 }
 
-process.on(
-  "SIGINT",
-  () => shutdown("SIGINT")
-);
+process.on("SIGINT", () => shutdown("SIGINT"));
 
-process.on(
-  "SIGTERM",
-  () => shutdown("SIGTERM")
-);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // ============================================================================
 // Start
