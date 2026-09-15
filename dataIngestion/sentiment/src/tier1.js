@@ -7,100 +7,118 @@
 // Model:
 //   Xenova/twitter-roberta-base-sentiment-latest
 //
-// Purpose:
-//   - Run locally with Transformers.js
-//   - No hosted API calls
-//   - Batch classification for efficient processing
-//   - Provide confidence scores to the two-tier orchestrator
-//   - Safely handle long social-media posts
+// Architecture:
 //
-// Pipeline:
-//
-//   canonical.events
-//          │
-//          ▼
-//   event.content.text
-//          │
-//          ▼
-//   Tier 1 — Local Transformer
-//          │
-//          ├── confidence >= threshold → resolved
-//          │
-//          └── low confidence → Tier 2
+//   raw text
+//      ↓
+//   character safety limit
+//      ↓
+//   explicit tokenizer
+//      ↓
+//   truncation = true
+//   max_length = 256
+//   padding = max_length
+//      ↓
+//   ONNX model
+//      ↓
+//   sentiment + confidence
 //
 // IMPORTANT:
 //
-// This module does NOT modify canonical events.
-// It only receives text and returns derived sentiment predictions.
+// We intentionally DO NOT use the Transformers.js `pipeline()` abstraction
+// here.
 //
-// IMPORTANT:
+// The previous implementation passed max_length through pipeline(), but the
+// actual ONNX tensors were still:
 //
-// RoBERTa has a finite maximum sequence length. Social-media content,
-// scraped text, quoted posts, Telegram messages, Reddit content, etc.
-// can occasionally contain thousands of tokens.
+//   [8, 608]
+//   [7, 669]
+//   [8, 1118]
 //
-// Therefore every inference explicitly uses:
-//   truncation: true
-//   max_length: 256
-//
-// This prevents ONNX errors such as:
-//
-//   invalid expand shape
-//   Name:'/roberta/Expand'
+// Therefore we explicitly tokenize the inputs ourselves and verify the
+// resulting tensor shape BEFORE calling the model.
 //
 // ============================================================================
 
-import { pipeline } from "@xenova/transformers";
+import {
+  AutoTokenizer,
+  AutoModelForSequenceClassification,
+} from "@xenova/transformers";
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
 const MODEL_NAME =
+  process.env.TIER1_MODEL ||
   "Xenova/twitter-roberta-base-sentiment-latest";
 
-// Number of texts sent to the model at once.
 const DEFAULT_BATCH_SIZE = 8;
 
-// Maximum number of tokens processed per text.
-//
-// 256 is intentionally used instead of 512 because this is social-media
-// sentiment analysis. Extremely long content is usually unnecessary for
-// polarity classification and creates unnecessary CPU/memory pressure.
-//
-// If you later want to change this, keep it within the model's supported
-// sequence length.
+// RoBERTa sentiment model supports a maximum sequence length of 512,
+// but 256 is more than sufficient for our social-media use case.
 const MAX_LENGTH = 256;
 
-// ============================================================================
-// Lazy Model Loading
-// ============================================================================
+// Character-level defensive limit.
 //
-// Model loading is expensive, so keep a single shared Promise.
-//
-// Multiple calls to classifyTier1() / classifyTier1Batch() will reuse the
-// same model instance instead of loading the transformer repeatedly.
+// This is NOT the actual token limit.
+// It only prevents pathological scraped content from reaching the tokenizer.
+const MAX_INPUT_CHARACTERS = 1200;
+
+// ============================================================================
+// Model state
 // ============================================================================
 
-let classifierPromise = null;
+let tokenizer = null;
+let model = null;
+let loadingPromise = null;
 
-function getClassifier() {
-  if (!classifierPromise) {
+// ============================================================================
+// Load tokenizer + model
+// ============================================================================
+
+async function loadModel() {
+  if (tokenizer && model) {
+    return;
+  }
+
+  if (loadingPromise) {
+    return loadingPromise;
+  }
+
+  loadingPromise = (async () => {
+    console.log(
+      `[Tier 1] Loading tokenizer: ${MODEL_NAME}`
+    );
+
+    tokenizer =
+      await AutoTokenizer.from_pretrained(
+        MODEL_NAME
+      );
+
     console.log(
       `[Tier 1] Loading local sentiment model: ${MODEL_NAME}`
     );
 
-    classifierPromise = pipeline(
-      "sentiment-analysis",
-      MODEL_NAME
-    );
-  }
+    model =
+      await AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME
+      );
 
-  return classifierPromise;
+    console.log(
+      "[Tier 1] Tokenizer and model loaded successfully."
+    );
+  })();
+
+  try {
+    await loadingPromise;
+  } finally {
+    loadingPromise = null;
+  }
 }
 
 // ============================================================================
-// Helpers
+// Validation
 // ============================================================================
 
 function validateText(text) {
@@ -111,101 +129,348 @@ function validateText(text) {
 }
 
 // ============================================================================
-// Normalize classifier output
+// Prepare text
 // ============================================================================
 
-function normalizeResult(result) {
-  if (!result || typeof result !== "object") {
-    throw new Error(
-      "Tier 1 returned an invalid classification result."
-    );
-  }
-
-  if (
-    typeof result.label !== "string" ||
-    typeof result.score !== "number"
-  ) {
-    throw new Error(
-      "Tier 1 returned an invalid label or confidence score."
-    );
-  }
-
-  return {
-    label: result.label.toLowerCase(),
-    score: result.score,
-  };
-}
-
-// ============================================================================
-// Classifier Options
-// ============================================================================
-//
-// Keep these options in one place so both single and batch inference behave
-// consistently.
-//
-// `truncation: true` is critical.
-//
-// Without it, a scraped post can produce thousands of tokens and cause
-// ONNX Runtime to fail inside the RoBERTa model.
-//
-// `max_length: 256` ensures every input stays within a safe size.
-// ============================================================================
-
-const CLASSIFIER_OPTIONS = {
-  truncation: true,
-  max_length: MAX_LENGTH,
-};
-
-// ============================================================================
-// Single Classification
-// ============================================================================
-
-/**
- * Classify a single piece of text locally.
- *
- * @param {string} text
- *
- * @returns {Promise<{
- *   label: "positive"|"neutral"|"negative",
- *   score: number
- * }>}
- */
-export async function classifyTier1(text) {
+function prepareText(text) {
   if (!validateText(text)) {
     throw new Error(
       "Tier 1 requires non-empty text."
     );
   }
 
-  const classifier = await getClassifier();
+  const normalized =
+    text.trim();
 
-  const [result] = await classifier(
-    text,
-    CLASSIFIER_OPTIONS
+  if (
+    normalized.length <=
+    MAX_INPUT_CHARACTERS
+  ) {
+    return normalized;
+  }
+
+  console.warn(
+    `[Tier 1] Input exceeds ` +
+    `${MAX_INPUT_CHARACTERS} characters. ` +
+    `Applying defensive character truncation. ` +
+    `Original length: ${normalized.length}`
   );
 
-  return normalizeResult(result);
+  return normalized.slice(
+    0,
+    MAX_INPUT_CHARACTERS
+  );
 }
 
 // ============================================================================
-// Batch Classification
+// Softmax
 // ============================================================================
 
-/**
- * Classify multiple texts using the local transformer.
- *
- * The input is processed in chunks to avoid excessive CPU/memory usage.
- *
- * Each text is also explicitly truncated to MAX_LENGTH tokens.
- *
- * @param {string[]} texts
- *
- * @returns {Promise<Array<{
- *   label: "positive"|"neutral"|"negative"|null,
- *   score: number|null
- * }>>}
- */
-export async function classifyTier1Batch(texts) {
+function softmax(values) {
+  const max =
+    Math.max(...values);
+
+  const exponentials =
+    values.map((value) =>
+      Math.exp(value - max)
+    );
+
+  const sum =
+    exponentials.reduce(
+      (total, value) =>
+        total + value,
+      0
+    );
+
+  return exponentials.map(
+    (value) =>
+      value / sum
+  );
+}
+
+// ============================================================================
+// Extract logits
+// ============================================================================
+
+function getLogits(output) {
+  if (
+    output &&
+    output.logits
+  ) {
+    return output.logits;
+  }
+
+  if (
+    Array.isArray(output) &&
+    output[0]?.logits
+  ) {
+    return output[0].logits;
+  }
+
+  throw new Error(
+    "Tier 1 model output does not contain logits."
+  );
+}
+
+// ============================================================================
+// Convert model output → sentiment
+// ============================================================================
+
+function normalizeModelOutput(output) {
+  const logits =
+    getLogits(output);
+
+  if (
+    !logits.dims ||
+    logits.dims.length !== 2
+  ) {
+    throw new Error(
+      `Unexpected logits dimensions: ` +
+      `${JSON.stringify(logits.dims)}`
+    );
+  }
+
+  const batchSize =
+    logits.dims[0];
+
+  const numberOfLabels =
+    logits.dims[1];
+
+  if (numberOfLabels !== 3) {
+    throw new Error(
+      `Expected 3 sentiment labels, ` +
+      `received ${numberOfLabels}.`
+    );
+  }
+
+  const values =
+    Array.from(logits.data);
+
+  const labels = [
+    "negative",
+    "neutral",
+    "positive",
+  ];
+
+  const results = [];
+
+  for (
+    let i = 0;
+    i < batchSize;
+    i++
+  ) {
+    const start =
+      i * numberOfLabels;
+
+    const row =
+      values.slice(
+        start,
+        start + numberOfLabels
+      );
+
+    const probabilities =
+      softmax(row);
+
+    let bestIndex = 0;
+
+    for (
+      let j = 1;
+      j < probabilities.length;
+      j++
+    ) {
+      if (
+        probabilities[j] >
+        probabilities[bestIndex]
+      ) {
+        bestIndex = j;
+      }
+    }
+
+    results.push({
+      label:
+        labels[bestIndex],
+      score:
+        probabilities[bestIndex],
+    });
+  }
+
+  return results;
+}
+
+// ============================================================================
+// Explicit tokenization
+// ============================================================================
+//
+// THIS IS THE IMPORTANT FIX.
+//
+// We do not rely on pipeline() to apply max_length.
+//
+// The tokenizer itself receives:
+//
+//   truncation: true
+//   max_length: 256
+//   padding: "max_length"
+//
+// Then we inspect the actual tensor dimensions.
+//
+// ============================================================================
+
+async function tokenizeTexts(texts) {
+  const encoded =
+    await tokenizer(
+      texts,
+      {
+        truncation: true,
+        max_length: MAX_LENGTH,
+        padding: "max_length",
+        return_tensors: "np",
+      }
+    );
+
+  if (
+    !encoded ||
+    !encoded.input_ids
+  ) {
+    throw new Error(
+      "Tier 1 tokenizer did not return input_ids."
+    );
+  }
+
+  const inputDims =
+    encoded.input_ids.dims;
+
+  const attentionDims =
+    encoded.attention_mask?.dims;
+
+  console.log(
+    `[Tier 1] Actual input_ids shape: ` +
+    `${JSON.stringify(inputDims)}`
+  );
+
+  console.log(
+    `[Tier 1] Actual attention_mask shape: ` +
+    `${JSON.stringify(attentionDims)}`
+  );
+
+  // --------------------------------------------------------------------------
+  // HARD SAFETY CHECK
+  // --------------------------------------------------------------------------
+
+  if (
+    !Array.isArray(inputDims) ||
+    inputDims.length !== 2
+  ) {
+    throw new Error(
+      `Invalid input_ids dimensions: ` +
+      `${JSON.stringify(inputDims)}`
+    );
+  }
+
+  const actualBatchSize =
+    inputDims[0];
+
+  const actualSequenceLength =
+    inputDims[1];
+
+  if (
+    actualBatchSize !==
+    texts.length
+  ) {
+    throw new Error(
+      `Tokenizer batch mismatch. ` +
+      `Expected ${texts.length}, ` +
+      `received ${actualBatchSize}.`
+    );
+  }
+
+  if (
+    actualSequenceLength >
+    MAX_LENGTH
+  ) {
+    throw new Error(
+      `CRITICAL: tokenizer produced ` +
+      `${actualSequenceLength} tokens ` +
+      `with max_length=${MAX_LENGTH}.`
+    );
+  }
+
+  if (
+    actualSequenceLength !==
+    MAX_LENGTH
+  ) {
+    console.warn(
+      `[Tier 1] Tokenizer sequence length is ` +
+      `${actualSequenceLength}; expected ${MAX_LENGTH}.`
+    );
+  }
+
+  return encoded;
+}
+
+// ============================================================================
+// Run one batch
+// ============================================================================
+
+async function classifyPreparedBatch(
+  texts
+) {
+  const encoded =
+    await tokenizeTexts(texts);
+
+  console.log(
+    `[Tier 1] Running ONNX inference for ` +
+    `${texts.length} texts.`
+  );
+
+  const output =
+    await model(encoded);
+
+  return normalizeModelOutput(
+    output
+  );
+}
+
+// ============================================================================
+// Single classification
+// ============================================================================
+
+export async function classifyTier1(
+  text
+) {
+  const safeText =
+    prepareText(text);
+
+  await loadModel();
+
+  console.log(
+    `[Tier 1] Running single classification. ` +
+    `Input length: ${safeText.length} chars.`
+  );
+
+  const results =
+    await classifyPreparedBatch([
+      safeText,
+    ]);
+
+  if (
+    !Array.isArray(results) ||
+    results.length !== 1
+  ) {
+    throw new Error(
+      "Tier 1 single classification returned an invalid result."
+    );
+  }
+
+  return results[0];
+}
+
+// ============================================================================
+// Batch classification
+// ============================================================================
+
+export async function classifyTier1Batch(
+  texts
+) {
   if (!Array.isArray(texts)) {
     throw new TypeError(
       "classifyTier1Batch() expects an array of texts."
@@ -216,112 +481,191 @@ export async function classifyTier1Batch(texts) {
     return [];
   }
 
-  // Validate the complete input before loading/running the model.
-  for (let i = 0; i < texts.length; i++) {
-    if (!validateText(texts[i])) {
-      throw new Error(
-        `Tier 1 received empty or invalid text at index ${i}.`
-      );
-    }
-  }
+  // --------------------------------------------------------------------------
+  // Prepare every input first.
+  // --------------------------------------------------------------------------
 
-  const classifier =
-    await getClassifier();
+  const preparedTexts =
+    texts.map(
+      (text, index) => {
+        if (!validateText(text)) {
+          throw new Error(
+            `Tier 1 received empty or invalid ` +
+            `text at index ${index}.`
+          );
+        }
+
+        return prepareText(text);
+      }
+    );
+
+  // --------------------------------------------------------------------------
+  // Load model once.
+  // --------------------------------------------------------------------------
+
+  await loadModel();
+
+  // --------------------------------------------------------------------------
+  // Batch configuration.
+  // --------------------------------------------------------------------------
+
+  const configuredBatchSize =
+    Number(
+      process.env.TIER1_BATCH_SIZE
+    );
 
   const batchSize =
-    Number(process.env.TIER1_BATCH_SIZE) ||
-    DEFAULT_BATCH_SIZE;
-
-  if (
-    !Number.isInteger(batchSize) ||
-    batchSize <= 0
-  ) {
-    throw new Error(
-      "TIER1_BATCH_SIZE must be a positive integer."
-    );
-  }
-
-  const results = [];
+    Number.isInteger(
+      configuredBatchSize
+    ) &&
+      configuredBatchSize > 0
+      ? configuredBatchSize
+      : DEFAULT_BATCH_SIZE;
 
   console.log(
-    `[Tier 1] Classifying ${texts.length} texts ` +
+    `[Tier 1] Classifying ` +
+    `${preparedTexts.length} texts ` +
     `in batches of ${batchSize}.`
   );
 
   console.log(
-    `[Tier 1] Maximum sequence length: ${MAX_LENGTH} tokens.`
+    `[Tier 1] Maximum sequence length: ` +
+    `${MAX_LENGTH} tokens.`
   );
+
+  console.log(
+    `[Tier 1] Maximum defensive input length: ` +
+    `${MAX_INPUT_CHARACTERS} characters.`
+  );
+
+  // --------------------------------------------------------------------------
+  // Process chunks.
+  // --------------------------------------------------------------------------
+
+  const results = [];
 
   for (
     let i = 0;
-    i < texts.length;
+    i < preparedTexts.length;
     i += batchSize
   ) {
     const chunk =
-      texts.slice(i, i + batchSize);
-
-    // ------------------------------------------------------------------------
-    // Run inference
-    // ------------------------------------------------------------------------
-    //
-    // IMPORTANT:
-    //
-    // Pass truncation/max_length explicitly.
-    //
-    // Previously:
-    //
-    //   classifier(chunk)
-    //
-    // could create inputs such as:
-    //
-    //   [8, 1118]
-    //   [7, 4306]
-    //
-    // which exceeds the RoBERTa model's supported sequence length.
-    //
-    // ------------------------------------------------------------------------
-
-    const chunkResults =
-      await classifier(
-        chunk,
-        CLASSIFIER_OPTIONS
+      preparedTexts.slice(
+        i,
+        i + batchSize
       );
 
-    // ------------------------------------------------------------------------
-    // Validate model response
-    // ------------------------------------------------------------------------
-
-    if (
-      !Array.isArray(chunkResults) ||
-      chunkResults.length !== chunk.length
-    ) {
-      throw new Error(
-        `Tier 1 returned ` +
-        `${chunkResults?.length ?? 0} results ` +
-        `for ${chunk.length} texts.`
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // Normalize results
-    // ------------------------------------------------------------------------
-
-    results.push(
-      ...chunkResults.map(
-        normalizeResult
-      )
-    );
-
-    // ------------------------------------------------------------------------
-    // Progress
-    // ------------------------------------------------------------------------
+    const batchNumber =
+      Math.floor(
+        i / batchSize
+      ) + 1;
 
     console.log(
-      `[Tier 1] Processed ` +
-      `${Math.min(i + batchSize, texts.length)}/` +
-      `${texts.length}`
+      `[Tier 1] Processing batch ` +
+      `${batchNumber} ` +
+      `(${chunk.length} texts)...`
+    );
+
+    try {
+      const chunkResults =
+        await classifyPreparedBatch(
+          chunk
+        );
+
+      if (
+        !Array.isArray(
+          chunkResults
+        )
+      ) {
+        throw new Error(
+          "Tier 1 returned a non-array result."
+        );
+      }
+
+      if (
+        chunkResults.length !==
+        chunk.length
+      ) {
+        throw new Error(
+          `Tier 1 returned ` +
+          `${chunkResults.length} results ` +
+          `for ${chunk.length} texts.`
+        );
+      }
+
+      results.push(
+        ...chunkResults
+      );
+
+      console.log(
+        `[Tier 1] Processed ` +
+        `${results.length}/` +
+        `${preparedTexts.length}`
+      );
+    } catch (error) {
+      console.error(
+        `[Tier 1] Batch ${batchNumber} failed:`,
+        error.message
+      );
+
+      throw error;
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Final validation.
+  // --------------------------------------------------------------------------
+
+  if (
+    results.length !==
+    preparedTexts.length
+  ) {
+    throw new Error(
+      `Tier 1 produced ` +
+      `${results.length} results ` +
+      `for ${preparedTexts.length} inputs.`
     );
   }
 
   return results;
 }
+
+// ============================================================================
+// Startup diagnostics
+// ============================================================================
+
+console.log(
+  "[Tier 1] Configuration loaded:"
+);
+
+console.log(
+  `  Model: ${MODEL_NAME}`
+);
+
+console.log(
+  `  Max tokens: ${MAX_LENGTH}`
+);
+
+console.log(
+  `  Max characters: ${MAX_INPUT_CHARACTERS}`
+);
+
+console.log(
+  `  Batch size: ` +
+  `${Number(
+    process.env.TIER1_BATCH_SIZE
+  ) || DEFAULT_BATCH_SIZE
+  }`
+);
+
+console.log(
+  "  Explicit tokenizer: enabled"
+);
+
+console.log(
+  "  Token truncation: enabled"
+);
+
+console.log(
+  "  Padding: max_length"
+);
