@@ -19,12 +19,6 @@ import { TrendAnalytics } from "@/data/types";
 import { FadeInSection } from "@/components/ui/SectionHeader";
 
 // ── Curated Color Palettes ────────────────────────────────────────────────────
-const GENDER_COLORS: Record<string, string> = {
-  Male: "#3B759E",
-  Female: "#D96B54",
-  Other: "#D9822B",
-};
-
 const LANG_COLORS = ["#3B759E", "#4A9E79", "#D9822B", "#D96B54", "#7B68A4", "#52616B"];
 const REGION_COLORS = ["#3B759E", "#4A9E79", "#D9822B", "#7B68A4", "#52616B"];
 
@@ -39,12 +33,12 @@ function CardHeader({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 shrink-0">
       <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#EBF3FA] flex items-center justify-center text-[#3B759E] shrink-0">
         {icon}
       </div>
       <div>
-        <h3 className="text-sm font-bold leading-tight" style={{ color: "var(--navy)" }}>
+        <h3 className="text-sm sm:text-base font-bold leading-tight" style={{ color: "var(--navy)" }}>
           {title}
         </h3>
         <p className="text-[11px] sm:text-xs mt-0.5 text-slate-500">
@@ -55,7 +49,7 @@ function CardHeader({
   );
 }
 
-// ── Reusable Key Takeaway Side-Card ───────────────────────────────────────────
+// ── Reusable Key Takeaway Bottom Banner Card ──────────────────────────────────
 function KeyTakeawayCard({
   icon,
   text,
@@ -64,24 +58,26 @@ function KeyTakeawayCard({
   text: string;
 }) {
   return (
-    <div className="bg-[#F8FAFC] border border-[#EEF2F6] rounded-xl p-3 sm:p-3.5 flex flex-col justify-center gap-2 h-full">
-      <div className="flex items-center gap-1.5 text-[#3B759E]">
+    <div className="bg-[#F8FAFC] border border-[#EEF2F6] rounded-xl p-3 sm:p-3.5 flex items-start gap-3 w-full h-[90px] sm:h-[94px]">
+      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#EBF3FA] flex items-center justify-center text-[#3B759E] shrink-0 mt-0.5">
         {icon}
-        <span className="text-xs font-bold text-[#1E293B]">Key Takeaway</span>
       </div>
-      <p className="text-[11px] sm:text-xs leading-relaxed text-[#475569] font-medium">
-        {text}
-      </p>
+      <div className="flex-1 min-w-0 flex flex-col justify-center">
+        <span className="text-xs font-bold text-[#1E293B] block leading-tight">Key Takeaway</span>
+        <p className="text-[11px] sm:text-xs leading-relaxed text-[#475569] font-medium mt-1 line-clamp-3">
+          {text}
+        </p>
+      </div>
     </div>
   );
 }
 
-// ── Card 1: Age Distribution (Top Left) ───────────────────────────────────────
+// ── Card 1: Age Distribution ──────────────────────────────────────────────────
 function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const chartData = useMemo(() => {
     return trend.demographics.ageGender.map((b) => ({
       ageRange: b.ageRange,
-      share: b.male + b.female + b.other,
+      share: Math.round((b.male + b.female + b.other) * 10) / 10,
     }));
   }, [trend.demographics.ageGender]);
 
@@ -93,8 +89,21 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
     };
   }, [chartData]);
 
+  const yConfig = useMemo(() => {
+    const maxVal = Math.max(...chartData.map((d) => d.share), 10);
+    if (maxVal <= 24) {
+      return { domain: [0, 24], ticks: [0, 6, 12, 18, 24] };
+    }
+    const ceilMax = Math.ceil(maxVal / 10) * 10;
+    const step = ceilMax / 4;
+    return {
+      domain: [0, ceilMax],
+      ticks: [0, step, step * 2, step * 3, ceilMax],
+    };
+  }, [chartData]);
+
   return (
-    <div className="card flex flex-col justify-between p-4 sm:p-5 h-full">
+    <div className="card flex flex-col justify-between p-4 sm:p-5 lg:p-6 h-full">
       <CardHeader
         title="Age Distribution"
         subtitle="Audience share across age groups"
@@ -108,26 +117,26 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
         }
       />
 
-      <div className="flex-1 flex flex-col sm:flex-row items-center gap-3 sm:gap-4 mt-2 sm:mt-3">
-        {/* Bar chart */}
-        <div className="flex-1 w-full min-w-0 h-[175px] sm:h-[190px]">
+      {/* Bar chart spanning full card width and filling vertical height cleanly */}
+      <div className="flex-1 w-full min-w-0 flex flex-col justify-center my-3 sm:my-4">
+        <div className="w-full h-[300px] sm:h-[335px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={chartData}
-              margin={{ top: 12, right: 8, left: -22, bottom: 0 }}
-              barSize={18}
+              margin={{ top: 20, right: 10, left: -22, bottom: 0 }}
+              barSize={36}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F6" vertical={false} />
               <XAxis
                 dataKey="ageRange"
-                tick={{ fontSize: 10, fill: "#64748B" }}
+                tick={{ fontSize: 11, fill: "#64748B" }}
                 axisLine={{ stroke: "#E2E8F0" }}
                 tickLine={false}
               />
               <YAxis
-                domain={[0, 24]}
-                ticks={[0, 6, 12, 18, 24]}
-                tick={{ fontSize: 9, fill: "#94A3B8" }}
+                domain={yConfig.domain}
+                ticks={yConfig.ticks}
+                tick={{ fontSize: 10, fill: "#94A3B8" }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -153,183 +162,55 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
             </BarChart>
           </ResponsiveContainer>
         </div>
+      </div>
 
-        {/* Key Takeaway */}
-        <div className="w-full sm:w-[35%] shrink-0 h-full">
-          <KeyTakeawayCard
-            icon={
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 18h6" />
-                <path d="M10 22h4" />
-                <path d="M12 2a7 7 0 0 0-7 7c0 2.5 1.5 4.7 3.7 5.8.5.3.8.8.8 1.4V17h5v-.8c0-.6.3-1.1.8-1.4C17.5 13.7 19 11.5 19 9a7 7 0 0 0-7-7z" />
-              </svg>
-            }
-            text={`The largest share of engagement comes from ${topTwoAges.top1} year olds, followed by ${topTwoAges.top2} year olds.`}
-          />
-        </div>
+      {/* Key Takeaway at Bottom */}
+      <div className="w-full shrink-0 mt-auto">
+        <KeyTakeawayCard
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7zm-2 18c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h-4v1z" />
+            </svg>
+          }
+          text={`The largest share of engagement comes from ${topTwoAges.top1} year olds, followed by ${topTwoAges.top2} year olds.`}
+        />
       </div>
     </div>
   );
 }
 
-// ── Card 2: Gender Distribution (Top Right) ───────────────────────────────────
-function GenderDistributionCard({ trend }: { trend: TrendAnalytics }) {
-  const { genderData, dominantGender, dominantPercent } = useMemo(() => {
-    const raw = trend.demographics.ageGender;
-    const totalMale = raw.reduce((sum, b) => sum + b.male, 0);
-    const totalFemale = raw.reduce((sum, b) => sum + b.female, 0);
-    const totalOther = raw.reduce((sum, b) => sum + b.other, 0);
-    const total = totalMale + totalFemale + totalOther || 100;
-
-    const malePct = Math.round((totalMale / total) * 100);
-    const femalePct = Math.round((totalFemale / total) * 100);
-    const otherPct = Math.max(0, 100 - malePct - femalePct);
-
-    const items = [
-      { name: "Male", value: malePct, color: GENDER_COLORS.Male },
-      { name: "Female", value: femalePct, color: GENDER_COLORS.Female },
-      { name: "Other", value: otherPct, color: GENDER_COLORS.Other },
-    ];
-
-    const dominant = items.reduce((prev, curr) => (curr.value > prev.value ? curr : prev), items[0]);
-
-    return {
-      genderData: items,
-      dominantGender: dominant.name.toLowerCase(),
-      dominantPercent: dominant.value,
-    };
-  }, [trend.demographics.ageGender]);
-
+const SliceLabel = (props: PieLabelRenderProps) => {
+  const { cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, value, percent } = props;
+  const shareVal = typeof value === "number" ? value : (percent != null ? Math.round(Number(percent) * 100) : 0);
+  if (!shareVal || shareVal < 4) return null;
+  const RADIAN = Math.PI / 180;
+  const radius = Number(innerRadius) + (Number(outerRadius) - Number(innerRadius)) * 0.52;
+  const x = Number(cx) + radius * Math.cos(-Number(midAngle) * RADIAN);
+  const y = Number(cy) + radius * Math.sin(-Number(midAngle) * RADIAN);
   return (
-    <div className="card flex flex-col justify-between p-4 sm:p-5 h-full">
-      <CardHeader
-        title="Gender Distribution"
-        subtitle="Audience share by gender"
-        icon={
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v6" />
-            <path d="M12 16v6" />
-            <path d="M4.93 4.93l4.24 4.24" />
-            <path d="M14.83 14.83l4.24 4.24" />
-            <path d="M14 16h6" />
-            <path d="M17 13v6" />
-          </svg>
-        }
-      />
-
-      <div className="flex-1 flex flex-col sm:flex-row items-center gap-3 sm:gap-4 mt-2 sm:mt-3">
-        {/* Donut chart */}
-        <div className="w-[170px] h-[170px] sm:w-[200px] sm:h-[200px] shrink-0 relative flex items-center justify-center">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={genderData}
-                cx="50%"
-                cy="50%"
-                innerRadius={59}
-                outerRadius={89}
-                paddingAngle={1.5}
-                dataKey="value"
-                isAnimationActive={true}
-                animationBegin={100}
-                animationDuration={900}
-                animationEasing="ease-out"
-              >
-                {genderData.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} stroke="#FFFFFF" strokeWidth={1.5} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{
-                  background: "white",
-                  border: "1px solid #E2E8F0",
-                  borderRadius: "8px",
-                  fontSize: "11px",
-                }}
-                formatter={(val) => [`${val}%`, "Share"]}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.82 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5, delay: 0.25, ease: "easeOut" }}
-            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center"
-          >
-            <span className="text-2xl sm:text-3xl font-black leading-none" style={{ color: "var(--navy)" }}>
-              {dominantPercent}%
-            </span>
-            <span className="text-xs sm:text-sm font-bold capitalize text-slate-500 mt-1">
-              {dominantGender}
-            </span>
-          </motion.div>
-        </div>
-
-        {/* Legend with percentages */}
-        <div className="flex flex-col justify-center gap-2 min-w-[95px] shrink-0">
-          {genderData.map((item) => (
-            <div key={item.name} className="flex items-center justify-between gap-3 text-xs">
-              <span className="flex items-center gap-1.5 text-[#64748B]">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: item.color }} />
-                {item.name}
-              </span>
-              <span className="font-bold text-[#1E293B]">{item.value}%</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Key Takeaway */}
-        <div className="w-full sm:w-[35%] shrink-0 h-full ml-auto">
-          <KeyTakeawayCard
-            icon={
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            }
-            text={`The conversation is predominantly driven by a ${dominantGender} audience, with ${dominantPercent}% share.`}
-          />
-        </div>
-      </div>
-    </div>
+    <text
+      x={x}
+      y={y}
+      fill="#FFFFFF"
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={10}
+      fontWeight={700}
+    >
+      {`${shareVal}%`}
+    </text>
   );
-}
+};
 
-// ── Card 3: Language Distribution (Bottom Left) ───────────────────────────────
+// ── Card 2: Language Distribution ─────────────────────────────────────────────
 function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const languages = trend.demographics.languages;
   const sorted = useMemo(() => [...languages].sort((a, b) => b.share - a.share), [languages]);
   const topLang = sorted[0] ?? { language: "English", share: 48 };
   const secondLang = sorted[1] ?? { language: "Hindi", share: 22 };
 
-  const renderSliceBadge = (props: PieLabelRenderProps) => {
-    const { cx = 0, cy = 0, midAngle = 0, innerRadius = 0, outerRadius = 0, percent = 0 } = props;
-    if (percent < 0.07) return null;
-    const RADIAN = Math.PI / 180;
-    const radius = Number(innerRadius) + (Number(outerRadius) - Number(innerRadius)) * 0.5;
-    const x = Number(cx) + radius * Math.cos(-midAngle * RADIAN);
-    const y = Number(cy) + radius * Math.sin(-midAngle * RADIAN);
-    return (
-      <text
-        x={x}
-        y={y}
-        fill="white"
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={9}
-        fontWeight={700}
-      >
-        {`${(percent * 100).toFixed(0)}%`}
-      </text>
-    );
-  };
-
   return (
-    <div className="card flex flex-col justify-between p-4 sm:p-5 h-full">
+    <div className="card flex flex-col justify-between p-4 sm:p-5 lg:p-6 h-full">
       <CardHeader
         title="Language Distribution"
         subtitle="Primary language of posts and discussions"
@@ -342,22 +223,23 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
         }
       />
 
-      <div className="flex-1 flex flex-col sm:flex-row items-center gap-3 sm:gap-4 mt-2 sm:mt-3">
+      {/* Donut chart + Legend filling middle space comfortably */}
+      <div className="flex-1 w-full min-w-0 flex items-center justify-between gap-2 sm:gap-3 my-auto py-2">
         {/* Donut chart */}
-        <div className="w-[170px] h-[170px] sm:w-[200px] sm:h-[200px] shrink-0 relative flex items-center justify-center">
+        <div className="w-[210px] h-[210px] sm:w-[240px] sm:h-[240px] xl:w-[250px] xl:h-[250px] shrink-0 relative flex items-center justify-center">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={languages}
                 cx="50%"
                 cy="50%"
-                innerRadius={59}
-                outerRadius={89}
+                innerRadius={62}
+                outerRadius={108}
                 paddingAngle={1.5}
                 dataKey="share"
                 nameKey="language"
                 labelLine={false}
-                label={renderSliceBadge}
+                label={<SliceLabel />}
                 isAnimationActive={true}
                 animationBegin={100}
                 animationDuration={900}
@@ -383,7 +265,7 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
             initial={{ opacity: 0, scale: 0.82 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.25, ease: "easeOut" }}
-            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center"
+            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-1"
           >
             <span className="text-2xl sm:text-3xl font-black leading-none" style={{ color: "var(--navy)" }}>
               {topLang.share}%
@@ -391,42 +273,42 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
             <span className="text-xs sm:text-sm font-bold leading-tight mt-1" style={{ color: "var(--navy)" }}>
               {topLang.language}
             </span>
-            <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium mt-0.5">
-              Most used
+            <span className="text-[10px] text-slate-400 font-medium mt-0.5">
+              Most used language
             </span>
           </motion.div>
         </div>
 
-        {/* Legend with percentages */}
-        <div className="flex flex-col justify-center gap-1.5 min-w-[105px] shrink-0">
+        {/* Legend shifted right with compact, tidy gap to percentages */}
+        <div className="flex flex-col justify-center gap-3 sm:gap-3.5 shrink-0 ml-auto w-[110px] sm:w-[120px] pr-0.5">
           {languages.slice(0, 6).map((item, i) => (
-            <div key={item.language} className="flex items-center justify-between gap-3 text-xs">
-              <span className="flex items-center gap-1.5 text-[#64748B] truncate max-w-[70px]">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: LANG_COLORS[i % LANG_COLORS.length] }} />
-                {item.language}
+            <div key={item.language} className="flex items-center justify-between gap-2.5 text-xs sm:text-[13px]">
+              <span className="flex items-center gap-2 text-[#64748B] min-w-0 flex-1">
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full shrink-0" style={{ background: LANG_COLORS[i % LANG_COLORS.length] }} />
+                <span className="truncate font-medium">{item.language}</span>
               </span>
-              <span className="font-bold text-[#1E293B]">{item.share}%</span>
+              <span className="font-bold text-[#1E293B] shrink-0 tabular-nums">{item.share}%</span>
             </div>
           ))}
         </div>
+      </div>
 
-        {/* Key Takeaway */}
-        <div className="w-full sm:w-[35%] shrink-0 h-full ml-auto">
-          <KeyTakeawayCard
-            icon={
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            }
-            text={`Conversations are largely in ${topLang.language}, followed by ${secondLang.language} and regional languages.`}
-          />
-        </div>
+      {/* Key Takeaway at Bottom */}
+      <div className="w-full shrink-0 mt-auto">
+        <KeyTakeawayCard
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          }
+          text={`Conversations are largely in ${topLang.language}, followed by ${secondLang.language} and regional languages.`}
+        />
       </div>
     </div>
   );
 }
 
-// ── Card 4: Regional Distribution (Bottom Right) ──────────────────────────────
+// ── Card 3: Regional Distribution ─────────────────────────────────────────────
 function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const topRegions = useMemo(
     () => [...trend.demographics.regions].sort((a, b) => b.share - a.share).slice(0, 5),
@@ -436,7 +318,7 @@ function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const top3Names = topRegions.slice(0, 3).map((r) => r.state);
 
   return (
-    <div className="card flex flex-col justify-between p-4 sm:p-5 h-full">
+    <div className="card flex flex-col justify-between p-4 sm:p-5 lg:p-6 h-full">
       <CardHeader
         title="Regional Distribution"
         subtitle="Top 5 states by trend activity (relative score)"
@@ -448,51 +330,61 @@ function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
         }
       />
 
-      <div className="flex-1 flex flex-col sm:flex-row items-center gap-3 sm:gap-4 mt-2 sm:mt-3">
-        {/* Progress bars */}
-        <div className="flex-1 w-full min-w-0 flex flex-col justify-center gap-2 sm:gap-2.5">
-          {topRegions.map((region, i) => (
-            <div key={region.state}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold" style={{ color: "var(--navy)" }}>
-                  {region.state}
-                </span>
-                <span className="text-[11px] font-medium text-slate-500">
-                  {region.mentions}
-                </span>
-              </div>
-              <div className="h-2 rounded-full overflow-hidden bg-[#EEF2F6]">
-                <div
-                  className="h-full rounded-full transition-all duration-700"
-                  style={{
-                    width: `${region.share}%`,
-                    background: REGION_COLORS[i % REGION_COLORS.length],
-                  }}
-                />
-              </div>
+      {/* 5 State Progress bars filling vertical space comfortably */}
+      <div className="flex-1 w-full min-w-0 flex flex-col justify-center gap-5 sm:gap-6 my-auto py-2">
+        {topRegions.map((region, i) => (
+          <motion.div
+            key={region.state}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 + i * 0.06, ease: "easeOut" }}
+            className="space-y-2"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs sm:text-sm font-semibold" style={{ color: "var(--navy)" }}>
+                {region.state}
+              </span>
+              <span className="text-xs font-medium text-slate-500">
+                {region.mentions}
+              </span>
             </div>
-          ))}
-        </div>
+            <div className="h-3 sm:h-3.5 rounded-full overflow-hidden bg-[#EEF2F6]">
+              <motion.div
+                className="h-full rounded-full"
+                initial={{ width: "0%" }}
+                animate={{ width: `${region.share}%` }}
+                transition={{
+                  duration: 0.85,
+                  delay: 0.15 + i * 0.08,
+                  ease: "easeOut",
+                }}
+                style={{
+                  background: REGION_COLORS[i % REGION_COLORS.length],
+                }}
+              />
+            </div>
+          </motion.div>
+        ))}
+      </div>
 
-        {/* Key Takeaway */}
-        <div className="w-full sm:w-[35%] shrink-0 h-full">
-          <KeyTakeawayCard
-            icon={
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 20V10" />
-                <path d="M12 20V4" />
-                <path d="M6 20v-6" />
-              </svg>
-            }
-            text={`Highest activity from ${top3Names[0] || "lead states"}, ${top3Names[1] || ""} and ${top3Names[2] || ""}. State-level details available in the Regional Intelligence section.`}
-          />
-        </div>
+      {/* Key Takeaway at Bottom */}
+      <div className="w-full shrink-0 mt-auto">
+        <KeyTakeawayCard
+          icon={
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 20V10" />
+              <path d="M12 20V4" />
+              <path d="M6 20v-6" />
+            </svg>
+          }
+          text={`Highest activity from ${top3Names[0] || "lead states"}, ${top3Names[1] || ""} and ${top3Names[2] || ""}. State-level details available in the Regional Intelligence section.`}
+        />
       </div>
     </div>
   );
 }
 
-// ── Main Slide Component (2x2 Bento Box Grid) ─────────────────────────────────
+// ── Main Slide Component (3-Column Layout, Height Strictly Preserved) ──────────
 export default function AudienceInsights({ trend }: { trend: TrendAnalytics }) {
   return (
     <FadeInSection
@@ -551,13 +443,12 @@ export default function AudienceInsights({ trend }: { trend: TrendAnalytics }) {
         </div>
       </div>
 
-      {/* ── 2x2 Bento Box Grid (Strictly preserving original container bounds) ─── */}
+      {/* ── 3-Column Bento Grid (Strictly preserving original container bounds) ─── */}
       <div
-        className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch"
+        className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-5 items-stretch"
         style={{ minHeight: "clamp(560px, 76vh, 660px)" }}
       >
         <AgeDistributionCard trend={trend} />
-        <GenderDistributionCard trend={trend} />
         <LanguageDistributionCard trend={trend} />
         <RegionalDistributionCard trend={trend} />
       </div>
