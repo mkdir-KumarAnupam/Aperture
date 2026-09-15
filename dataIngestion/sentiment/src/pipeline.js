@@ -51,6 +51,7 @@ import {
   classifyTier2,
   classifyTier2Batch,
 } from "./tier2.js";
+import 'dotenv/config';
 
 // ============================================================================
 // Configuration

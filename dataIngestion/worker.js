@@ -27,6 +27,8 @@ const {
   createBullMQConnection,
   localSharedRedis,
   pgClient,
+  connectPostgres,
+  checkPostgres,
 } = require("./config");
 
 const {
@@ -818,8 +820,7 @@ function createTrendWorker() {
     async (job) => {
       const data =
         getCanonicalData(job);
-
-      validateCollection(data);
+        validateCollection(data);
 
       const trendLabel =
         getTrendLabel(data);
@@ -835,8 +836,7 @@ function createTrendWorker() {
       // Local trend analysis
       // ----------------------------------------------------------------------
 
-      const result =
-        analyzeTrend(data);
+      const result = analyzeTrend(data);
 
       if (
         !result ||
@@ -866,8 +866,7 @@ function createTrendWorker() {
       // Logging
       // ----------------------------------------------------------------------
 
-      const ranking =
-        enriched.globalRanking;
+      const ranking = enriched.globalRanking;
 
       if (ranking) {
         log(
@@ -1176,8 +1175,8 @@ function createDatabaseWorker() {
         }
 
         analytics[category] = resultData;
-        console.log(category);
-        console.log(resultData);
+        // console.log(category);
+        // console.log(resultData);
       }
 
       // ----------------------------------------------------------------------
@@ -1281,31 +1280,48 @@ function createDatabaseWorker() {
        *     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       */
 
-      // const query = `
-      //   INSERT INTO trend_analytics (
-      //     run_id,
-      //     trend_label,
-      //     schema_version,
-      //     canonical_collection,
-      //     analytics
-      //   )
-      //   VALUES ($1, $2, $3, $4, $5)
-      //   ON CONFLICT (run_id)
-      //   DO UPDATE SET
-      //     trend_label = EXCLUDED.trend_label,
-      //     schema_version = EXCLUDED.schema_version,
-      //     canonical_collection = EXCLUDED.canonical_collection,
-      //     analytics = EXCLUDED.analytics,
-      //     updated_at = CURRENT_TIMESTAMP
-      // `;
+      const isHealthy = await checkPostgres();
 
-      // await pgClient.query(query, [
-      //   databaseRecord.run_id,
-      //   databaseRecord.trend_label,
-      //   databaseRecord.schema_version,
-      //   JSON.stringify(databaseRecord.canonical_collection),
-      //   JSON.stringify(databaseRecord.analytics),
-      // ]);
+      if (!isHealthy) {
+        log("Database", "PostgreSQL connection stale — reconnecting...");
+        await connectPostgres();
+      }
+
+      const query = `
+        INSERT INTO trend_analytics (
+          run_id,
+          trend_label,
+          schema_version,
+          canonical_collection,
+          analytics
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (run_id)
+        DO UPDATE SET
+          trend_label = EXCLUDED.trend_label,
+          schema_version = EXCLUDED.schema_version,
+          canonical_collection = EXCLUDED.canonical_collection,
+          analytics = EXCLUDED.analytics,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+
+      const QUERY_TIMEOUT_MS = 10_000;
+
+      await Promise.race([
+        pgClient.query(query, [
+          databaseRecord.run_id,
+          databaseRecord.trend_label,
+          databaseRecord.schema_version,
+          JSON.stringify(databaseRecord.canonical_collection),
+          JSON.stringify(databaseRecord.analytics),
+        ]),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`PostgreSQL query timed out after ${QUERY_TIMEOUT_MS}ms`)),
+            QUERY_TIMEOUT_MS
+          )
+        ),
+      ]);
 
       log(
         "Database",
@@ -1413,6 +1429,8 @@ async function startWorkers() {
     // ------------------------------------------------------------------------
 
     await loadSentimentPipeline();
+
+    await connectPostgres();
 
     // ------------------------------------------------------------------------
     // Create workers
