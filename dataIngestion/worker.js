@@ -1196,8 +1196,9 @@ function createDatabaseWorker() {
           );
         }
 
-        analytics[category] =
-          resultData;
+        analytics[category] = resultData;
+        console.log(category);
+        console.log(resultData);
       }
 
       // ----------------------------------------------------------------------
@@ -1270,20 +1271,6 @@ function createDatabaseWorker() {
         analytics,
       };
 
-      // ----------------------------------------------------------------------
-      // Database persistence
-      // ----------------------------------------------------------------------
-
-      /*
-       * PostgreSQL persistence is intentionally not enabled yet.
-       *
-       * DO NOT add an INSERT here until the actual PostgreSQL table schema
-       * is confirmed.
-       *
-       * At this stage we prove that the Database worker successfully
-       * constructs the complete persistence-ready record.
-       */
-
       if (
         !databaseRecord.run_id ||
         !databaseRecord.trend_label ||
@@ -1295,6 +1282,51 @@ function createDatabaseWorker() {
           "Database record construction failed."
         );
       }
+
+      // It is full established but for now i have not pushed it, i will push it after some testing
+      /* ----------------------------------------------------------------------
+       * PostgreSQL Persistence
+       * ----------------------------------------------------------------------
+       *
+       * Inserts or updates (upsert) the databaseRecord into the NeonDB instance.
+       *
+       * Table schema (trend_analytics):
+       *
+       *     id SERIAL PRIMARY KEY
+       *     run_id VARCHAR(255) UNIQUE NOT NULL
+       *     trend_label VARCHAR(255)
+       *     schema_version VARCHAR(50)
+       *     canonical_collection JSONB
+       *     analytics JSONB
+       *     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+       *     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      */
+
+      // const query = `
+      //   INSERT INTO trend_analytics (
+      //     run_id,
+      //     trend_label,
+      //     schema_version,
+      //     canonical_collection,
+      //     analytics
+      //   )
+      //   VALUES ($1, $2, $3, $4, $5)
+      //   ON CONFLICT (run_id)
+      //   DO UPDATE SET
+      //     trend_label = EXCLUDED.trend_label,
+      //     schema_version = EXCLUDED.schema_version,
+      //     canonical_collection = EXCLUDED.canonical_collection,
+      //     analytics = EXCLUDED.analytics,
+      //     updated_at = CURRENT_TIMESTAMP
+      // `;
+
+      // await pgClient.query(query, [
+      //   databaseRecord.run_id,
+      //   databaseRecord.trend_label,
+      //   databaseRecord.schema_version,
+      //   JSON.stringify(databaseRecord.canonical_collection),
+      //   JSON.stringify(databaseRecord.analytics),
+      // ]);
 
       log(
         "Database",

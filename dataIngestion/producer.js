@@ -769,40 +769,71 @@ function buildFlowTree(record) {
  *
  *   Redis message remains pending.
  */
-async function acknowledgeMessages(
-  entryIds
-) {
-  if (
-    !Array.isArray(entryIds) ||
-    entryIds.length === 0
-  ) {
+async function acknowledgeMessages(entryIds) {
+  if (!Array.isArray(entryIds) || entryIds.length === 0) {
     return;
   }
 
-  for (const entryId of entryIds) {
-    try {
-      await upstashRedis.xack(
-        CONFIG.streamKey,
-        CONFIG.consumerGroup,
-        entryId
-      );
+  try {
+    const ackedCount = await upstashRedis.xack(
+      CONFIG.streamKey,
+      CONFIG.consumerGroup,
+      ...entryIds
+    );
 
-      logSuccess(
-        `[ACK] ${entryId}`
-      );
-    } catch (error) {
-      /*
-       * BullMQ already accepted the job.
-       *
-       * If XACK fails, the Redis message may be delivered again.
-       *
-       * Downstream processing should therefore eventually be idempotent
-       * using collectionId/eventId.
-       */
+    logSuccess(
+      `[ACK] Acknowledged ${ackedCount}/${entryIds.length} entries.`
+    );
+  } catch (error) {
+    logWarning(
+      `[ACK FAILED] ${error.message}`
+    );
+  }
+}
+
+async function deleteMessages(entryIds) {
+  if (!Array.isArray(entryIds) || entryIds.length === 0) {
+    return;
+  }
+
+  try {
+    const deletedCount = await upstashRedis.xdel(
+      CONFIG.streamKey,
+      ...entryIds
+    );
+
+    logSuccess(
+      `[XDEL] Removed ${deletedCount}/${entryIds.length} entries from stream.`
+    );
+  } catch (error) {
+    logWarning(
+      `[XDEL FAILED] ${error.message}`
+    );
+  }
+}
+
+async function reclaimStalePending(minIdleMs = 5 * 60_000) {
+  try {
+    const [nextCursor, claimedEntries] = await upstashRedis.xautoclaim(
+      CONFIG.streamKey,
+      CONFIG.consumerGroup,
+      CONFIG.consumerName,
+      minIdleMs,
+      "0",
+      "COUNT",
+      10
+    );
+
+    if (claimedEntries.length > 0) {
       logWarning(
-        `[ACK FAILED] ${entryId} | ${error.message}`
+        `[RECLAIMED] ${claimedEntries.length} stale pending entrie(s) reassigned to this consumer.`
       );
     }
+
+    return claimedEntries;
+  } catch (error) {
+    logWarning(`[RECLAIM FAILED] ${error.message}`);
+    return [];
   }
 }
 
@@ -828,14 +859,15 @@ async function fetchBulkStreamData(
     logInfo(
       `Received ${newMessages.length} new message(s).`
     );
+  }
 
-    const newResult =
-      prepareMessages(
-        newMessages
-      );
+  const newResult = prepareMessages(newMessages);
 
-    allPrepared.push(
-      ...newResult.prepared
+  allPrepared.push(...newResult.prepared);
+
+  if (newResult.failed.length > 0) {
+    logWarning(
+      `${newResult.failed.length} message(s) failed validation and remain pending in the stream.`
     );
   }
 
@@ -859,8 +891,16 @@ async function orchestrateData() {
       "Polling Redis Stream for canonical collections..."
     );
 
-    const records = await fetchBulkStreamData(1);
-    console.table(records);
+    await reclaimStalePending();
+
+    const records = await fetchBulkStreamData(CONFIG.batchLimit);
+    console.table(
+      records.map((r) => ({
+        runId: r.runId,
+        trend: r.trend_label,
+        events: r.eventCount,
+      }))
+    );
 
     if (records.length === 0) {
       logInfo(
@@ -919,6 +959,9 @@ async function orchestrateData() {
     await acknowledgeMessages(
       entryIds
     );
+    // await deleteMessages(
+    //   entryIds
+    // );
 
     // ------------------------------------------------------------------------
     // Summary
