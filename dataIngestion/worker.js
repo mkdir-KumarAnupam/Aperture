@@ -98,6 +98,7 @@ const trendWorker = new Worker("TrendQueue", async (job) => {
 const networkWorker = new Worker("NetworkQueue", async (job) => {
     const result = analyzeNetwork(job.data);
     console.log(`🕸️ [Network] ${job.data.trend_label}: ${result.nodes.length} nodes, ${result.edges.length} edges, top=${result.topInfluencers[0]?.label ?? "none"}`);
+    
     return result;
 // the result contains object of type given below
 //     {

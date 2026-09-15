@@ -4,53 +4,54 @@ const { normalizeData } = require("./normalizeData"); // Assuming your previous 
 
 const flowProducer = new FlowProducer({ connection: localSharedRedis });
 
-const INTERVAL_MS = 60000; 
+const INTERVAL_MS = 60000;
 const BATCH_LIMIT = 1;
 
 async function fetchBulkStreamData(batchLimit = BATCH_LIMIT) {
-    const streamEntries = await upstashRedis.xrange('scrape:events', '-', '+', 'COUNT', batchLimit);
-    if (streamEntries.length === 0) return [];
+  const streamEntries = await upstashRedis.xrange('scrape:events', '-', '+', 'COUNT', batchLimit);
+  if (streamEntries.length === 0) return [];
 
   const parsedDataArray = [];
   const idsToDelete = [];
 
-    for (const entry of streamEntries) {
-        const [entryId, fieldsAndValues] = entry;
-        const dataIndex = fieldsAndValues.indexOf('data');
-        
-        if (dataIndex !== -1) {
-            try {
-                const data = JSON.parse(fieldsAndValues[dataIndex + 1]);
-                let targetTrendLabel = data?.targetTrendLabel || "Unknown Trend";
+  for (const entry of streamEntries) {
+      const [entryId, fieldsAndValues] = entry;
+      const dataIndex = fieldsAndValues.indexOf('data');
+      
+      if (dataIndex !== -1) {
+          try {
+              const data = JSON.parse(fieldsAndValues[dataIndex + 1]);
+              let targetTrendLabel = data?.trend || "Unknown Trend";
 
-                const tweets = data.tweets?.map(normalizeData) || [];
-                const redditPosts = data.reddit_posts?.map(normalizeData) || [];
-                
-                parsedDataArray.push({ 
-                    trend_label: targetTrendLabel, 
-                    posts: [...tweets, ...redditPosts] 
-                });
+              const tweets = data.x_payload?.map(normalizeData) || [];
+              const redditPosts = data.reddit_payload?.map(normalizeData) || [];
+              const telegramPosts = data.telegram_payload?.map(normalizeData) || [];
+              
+              parsedDataArray.push({ 
+                  trend_label: targetTrendLabel, 
+                  posts: [...tweets, ...redditPosts] 
+              });
 
-                idsToDelete.push(entryId);
-            } catch (error) {
-                console.error(`Failed to parse Stream ID ${entryId}:`, error.message);
-                idsToDelete.push(entryId); 
-            }
-        }
-    }
-    // 3. CLEANUP: Delete the entries we just handled so we don't process them again next minute
+              idsToDelete.push(entryId);
+          } catch (error) {
+              console.error(`Failed to parse Stream ID ${entryId}:`, error.message);
+              idsToDelete.push(entryId); 
+          }
+      }
+  }
+  // 3. CLEANUP: Delete the entries we just handled so we don't process them again next minute
   // if (idsToDelete.length > 0) {
   //     await redis.xdel('scrape:events', ...idsToDelete);
   // }
 
-    // Safely delete from Upstash to prevent duplicate processing
-    // if (idsToDelete.length > 0) {
-    //     await upstashRedis.xdel('scrape:events', ...idsToDelete);
-    // }
+  // Safely delete from Upstash to prevent duplicate processing
+  // if (idsToDelete.length > 0) {
+  //     await upstashRedis.xdel('scrape:events', ...idsToDelete);
+  // }
 
-    return parsedDataArray;
-  }
-  
+  return parsedDataArray;
+}
+
 
 async function orchestrateData() {
     try {
@@ -106,7 +107,7 @@ async function orchestrateData() {
   } catch (error) {
     console.error("❌ Orchestration failed:", error);
   }
-
+}
 
 console.log(`🚀 Hybrid Producer online. Polling Upstash every ${INTERVAL_MS / 1000}s.`);
 orchestrateData(); 

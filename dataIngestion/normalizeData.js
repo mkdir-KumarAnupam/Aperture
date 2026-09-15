@@ -52,6 +52,7 @@ function normalizeData(post) {
 
   if (platform === "twitter") return normalizeTwitter(post);
   if (platform === "reddit") return normalizeReddit(post);
+  if (platform === "telegram") return normalizeTelegram(post); 
 
   // Unknown/unsupported platform (including "telegram" until it's built) —
   // return whatever generic fields we can salvage instead of throwing, so
@@ -79,7 +80,6 @@ function detectPlatform(post) {
 // ---------------------------------------------------------------------------
 // Twitter / X
 // ---------------------------------------------------------------------------
-
 function normalizeTwitter(post) {
   const eng = post.engagement ?? {};
 
@@ -96,7 +96,6 @@ function normalizeTwitter(post) {
   const observedAt = toIsoOrNull(post.observedAt);
 
   return {
-    trend_label : post.trend_label,
     postId: post.postId ?? null,
     platform: "twitter",
     conversationId: post.conversationId ?? post.postId ?? null,
