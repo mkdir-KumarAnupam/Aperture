@@ -40,6 +40,7 @@ const {
 
 const { analyzeNetwork } = require("./networkAnalysis");
 const { generateForecast } = require("./forecasting/index");
+const { generateTrendDescription } = require("./groqClient");
 
 
 // ============================================================================
@@ -717,6 +718,33 @@ function createTrendWorker() {
       }
 
       // ----------------------------------------------------------------------
+      // Trend Description (Groq + Redis Cache)
+      // ----------------------------------------------------------------------
+      const cacheKey = `trend:desc:${trendLabel}`;
+      let description = await localSharedRedis.get(cacheKey);
+
+      if (!description) {
+        log("Trend", `Fetching description from Groq for trend: ${trendLabel}`);
+        
+        // Extract context from up to 10 events that have text
+        const contextEvents = (data.events || [])
+          .filter(e => typeof e.text === "string" && e.text.trim().length > 10)
+          .slice(0, 10)
+          .map(e => `- ${e.text.trim()}`)
+          .join("\n");
+        const trendContext = contextEvents.length > 0 ? contextEvents : null;
+
+        description = await generateTrendDescription(trendLabel, trendContext);
+        
+        if (description) {
+          // Cache for 24 hours to prevent duplicate API calls
+          await localSharedRedis.setex(cacheKey, 60 * 60 * 24, description);
+        }
+      }
+
+      result.description = description || "No description available.";
+
+      // ----------------------------------------------------------------------
       // Global trend statistics
       // ----------------------------------------------------------------------
 
@@ -762,7 +790,7 @@ function createTrendWorker() {
 
       return {
         category: "trend",
-
+        description: description || "No description available.",
         ...enriched,
       };
     },
