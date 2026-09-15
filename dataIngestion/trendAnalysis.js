@@ -353,8 +353,7 @@ function analyzeTrend(jobData) {
 
     id,
 
-    name:
-      trendLabel,
+    name: trendLabel,
 
     trendScore,
 
@@ -375,9 +374,6 @@ function analyzeTrend(jobData) {
     lifecycle,
 
     influence,
-
-    posts:
-      outputPosts,
 
     _windows:
       windowResults,
