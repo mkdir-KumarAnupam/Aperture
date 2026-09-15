@@ -220,6 +220,10 @@ const pgClient = new Client({
   keepAliveInitialDelayMillis: 10_000,
 });
 
+pgClient.on('error', (err) => {
+  console.error('Unexpected error on idle PostgreSQL client', err);
+});
+
 let postgresReady = false;
 
 

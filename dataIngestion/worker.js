@@ -39,6 +39,8 @@ const {
 } = require("./trendGlobalStats");
 
 const { analyzeNetwork } = require("./networkAnalysis");
+const { generateForecast } = require("./forecasting/index");
+
 
 // ============================================================================
 // Configuration
@@ -721,6 +723,17 @@ function createTrendWorker() {
       await recordTrendStats(localSharedRedis, result);
 
       const enriched = await enrichWithGlobalRanking(localSharedRedis, result);
+
+      // ----------------------------------------------------------------------
+      // Forecasting
+      // ----------------------------------------------------------------------
+      const history = enriched.globalRanking?.scoreHistory || [];
+      const forecastData = generateForecast(enriched, history);
+      
+
+      
+      // Save forecast to Redis
+      await localSharedRedis.set(`trend:forecast:${enriched.id}`, JSON.stringify(forecastData));
 
       // ----------------------------------------------------------------------
       // Logging
