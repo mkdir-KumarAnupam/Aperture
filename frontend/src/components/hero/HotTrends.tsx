@@ -14,7 +14,7 @@ export default function HotTrends({ activeTrendId, onSelect }: HotTrendsProps) {
     <div className="hot-trends w-full max-w-6xl mx-auto text-left">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-bold tracking-wider uppercase" style={{ color: "var(--slate)" }}>
-          🔥 Hot Trends
+          Hot Trends
         </h2>
         <span className="text-xs" style={{ color: "var(--slate)" }}>Select to explore</span>
       </div>
