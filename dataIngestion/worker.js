@@ -3,46 +3,22 @@
  * BULLMQ WORKERS
  * ============================================================================
  *
- * These workers consume jobs created by the Data Ingestion Producer.
+ * Analytics workers for the Aperture ingestion pipeline.
  *
- * Flow:
+ * Queues:
  *
- *                         merge-and-save
- *                              │
- *              ┌───────────────┼────────────────┐
- *              │               │                │
- *              ▼               ▼                ▼
- *         Sentiment       Demographic         Trend
- *              │               │                │
- *              └───────────────┼────────────────┘
- *                              │
- *                              ▼
- *                         DatabaseQueue
- *
- *         Network is an independent analytics child and also contributes
- *         its result to DatabaseQueue.
- *
+ *   SentimentQueue
+ *   DemographicQueue
+ *   TrendQueue
+ *   NetworkQueue
+ *   DatabaseQueue
  *
  * IMPORTANT:
  *
- * The canonical v1.0.0 collection produced by the scraper/daemon remains
- * the source of truth throughout this pipeline.
+ * All analytics operate on the canonical v1.0.0 collection.
+ * Analytics must never mutate the canonical raw events.
  *
- * Analytics workers derive results from the canonical collection.
- * They must NOT mutate or replace the canonical raw events.
- *
- * Canonical collection:
- *
- * {
- *   schemaVersion,
- *   collection,
- *   trend,
- *   platforms,
- *   events,
- *   authorProfiles,
- *   communities,
- *   quality
- * }
+ * ============================================================================
  */
 
 const { Worker } = require("bullmq");
@@ -72,37 +48,36 @@ const {
 
 const SUPPORTED_SCHEMA_VERSION = "1.0.0";
 
-const WORKER_OPTIONS = {
-  connection: createBullMQConnection(),
+/*
+ * Sentiment:
+ *
+ * Tier 1 runs a local ONNX model and is CPU/memory intensive.
+ *
+ * Keep this worker at concurrency=1 so multiple BullMQ jobs do not
+ * simultaneously execute ONNX inference inside the same Node process.
+ */
+const SENTIMENT_CONCURRENCY = 1;
 
-  /*
-   * Each worker can process up to 5 jobs concurrently.
-   *
-   * This is queue-level worker concurrency. It does not mean the same
-   * collection is processed five times.
-   */
-  concurrency: 5,
-};
+/*
+ * Lightweight analytics workers can process several jobs concurrently.
+ */
+const ANALYTICS_CONCURRENCY = 5;
+
+/*
+ * Database aggregation should remain serialized.
+ *
+ * This also makes later persistence ordering easier to reason about.
+ */
+const DATABASE_CONCURRENCY = 1;
 
 // ============================================================================
-// Sentiment Pipeline Loader
-// ============================================================================
-//
-// sentiment/src/pipeline.js is an ES module while this worker uses CommonJS.
-//
-// We therefore load the sentiment pipeline using dynamic import.
-//
-// IMPORTANT:
-// The workers are created only AFTER this function succeeds.
-// This guarantees analyzeBatch exists before SentimentQueue can process jobs.
+// Sentiment Pipeline
 // ============================================================================
 
 let analyzeBatch = null;
 
 async function loadSentimentPipeline() {
-  console.log(
-    "[Startup] Loading sentiment pipeline..."
-  );
+  console.log("[Startup] Loading sentiment pipeline...");
 
   const sentimentPipeline =
     await import("./sentiment/src/pipeline.js");
@@ -145,18 +120,15 @@ function error(worker, message) {
 // ============================================================================
 
 /**
- * Returns the canonical collection from a job.
+ * Resolve the canonical collection from a BullMQ job.
  *
- * Analytics child jobs may receive the canonical collection directly:
+ * Analytics children:
  *
- *     job.data = canonical
+ *   job.data = canonical
  *
- * The Database parent job contains:
+ * Database parent:
  *
- *     job.data.canonical = canonical
- *
- * Supporting both keeps the worker layer tolerant during the transition
- * between Producer/Consumer implementations.
+ *   job.data.canonical = canonical
  */
 function getCanonicalData(job) {
   if (!job?.data || typeof job.data !== "object") {
@@ -165,6 +137,9 @@ function getCanonicalData(job) {
     );
   }
 
+  /*
+   * Analytics child job.
+   */
   if (
     job.data.schemaVersion &&
     job.data.collection &&
@@ -173,6 +148,9 @@ function getCanonicalData(job) {
     return job.data;
   }
 
+  /*
+   * Database parent job.
+   */
   if (
     job.data.canonical &&
     typeof job.data.canonical === "object"
@@ -185,9 +163,10 @@ function getCanonicalData(job) {
   );
 }
 
-/**
- * Validate the minimum canonical v1.0.0 contract.
- */
+// ============================================================================
+// Canonical Validation
+// ============================================================================
+
 function validateCanonicalData(data) {
   if (!data || typeof data !== "object") {
     throw new Error(
@@ -263,9 +242,6 @@ function validateCanonicalData(data) {
   return true;
 }
 
-/**
- * Validate individual canonical events.
- */
 function validateEvents(events) {
   const eventIds = new Set();
 
@@ -295,9 +271,11 @@ function validateEvents(events) {
     }
 
     if (
-      !["x", "reddit", "telegram"].includes(
-        event.platform
-      )
+      ![
+        "x",
+        "reddit",
+        "telegram",
+      ].includes(event.platform)
     ) {
       throw new Error(
         `Unsupported platform '${event.platform}' ` +
@@ -317,17 +295,13 @@ function validateEvents(events) {
   return true;
 }
 
-/**
- * Validate the complete canonical collection.
- */
 function validateCollection(data) {
   validateCanonicalData(data);
   validateEvents(data.events);
 
   if (
     data.quality &&
-    typeof data.quality.recordsCollected ===
-    "number"
+    typeof data.quality.recordsCollected === "number"
   ) {
     if (
       data.quality.recordsCollected !==
@@ -344,9 +318,10 @@ function validateCollection(data) {
   return true;
 }
 
-/**
- * Return a human-readable trend label.
- */
+// ============================================================================
+// Canonical Convenience Helpers
+// ============================================================================
+
 function getTrendLabel(data) {
   return (
     data?.trend?.label ??
@@ -355,9 +330,6 @@ function getTrendLabel(data) {
   );
 }
 
-/**
- * Return platform event counts for logging.
- */
 function getPlatformCounts(events) {
   return events.reduce(
     (counts, event) => {
@@ -381,10 +353,21 @@ function createSentimentWorker() {
     );
   }
 
+  /*
+   * Sentiment gets concurrency=1 intentionally.
+   *
+   * Tier 1:
+   *   local ONNX inference
+   *
+   * Tier 2:
+   *   hosted LLM with its own global scheduler
+   */
   return new Worker(
     "SentimentQueue",
 
     async (job) => {
+      const startedAt = Date.now();
+
       const data =
         getCanonicalData(job);
 
@@ -393,15 +376,19 @@ function createSentimentWorker() {
       const trendLabel =
         getTrendLabel(data);
 
+      const runId =
+        data.collection.collectionId;
+
       log(
         "Sentiment",
-        `Processing ${data.events.length} events | ` +
+        `START job=${job.id} | ` +
+        `events=${data.events.length} | ` +
         `Trend=${trendLabel} | ` +
-        `Run=${data.collection.collectionId}`
+        `Run=${runId}`
       );
 
       // ----------------------------------------------------------------------
-      // Extract text from canonical events
+      // Extract analyzable text
       // ----------------------------------------------------------------------
 
       const textEntries = [];
@@ -426,11 +413,18 @@ function createSentimentWorker() {
 
         textEntries.push({
           eventIndex: index,
-          eventId: event.eventId,
+
+          eventId:
+            event.eventId,
+
           publishedAt:
             event.time?.publishedAt ?? null,
-          platform: event.platform,
-          text,
+
+          platform:
+            event.platform,
+
+          text:
+            text.trim(),
         });
       }
 
@@ -441,11 +435,11 @@ function createSentimentWorker() {
       );
 
       // ----------------------------------------------------------------------
-      // No analyzable text
+      // Nothing to analyze
       // ----------------------------------------------------------------------
 
       if (textEntries.length === 0) {
-        return {
+        const emptyResult = {
           category: "sentiment",
 
           eventCount:
@@ -485,11 +479,25 @@ function createSentimentWorker() {
             tier2: 0,
           },
         };
+
+        success(
+          "Sentiment",
+          `DONE job=${job.id} | ` +
+          `0/${data.events.length} analyzed | ` +
+          `No analyzable text.`
+        );
+
+        return emptyResult;
       }
 
       // ----------------------------------------------------------------------
       // Two-tier sentiment pipeline
       // ----------------------------------------------------------------------
+
+      log(
+        "Sentiment",
+        `Sending ${textEntries.length} texts to sentiment pipeline...`
+      );
 
       const predictions =
         await analyzeBatch(
@@ -500,8 +508,7 @@ function createSentimentWorker() {
 
       if (
         !Array.isArray(predictions) ||
-        predictions.length !==
-        textEntries.length
+        predictions.length !== textEntries.length
       ) {
         throw new Error(
           `Sentiment pipeline returned ` +
@@ -510,8 +517,14 @@ function createSentimentWorker() {
         );
       }
 
+      log(
+        "Sentiment",
+        `Sentiment pipeline returned ` +
+        `${predictions.length} predictions.`
+      );
+
       // ----------------------------------------------------------------------
-      // Attach predictions to canonical event identity
+      // Attach predictions to event identity
       // ----------------------------------------------------------------------
 
       const results = [];
@@ -578,7 +591,7 @@ function createSentimentWorker() {
       }
 
       // ----------------------------------------------------------------------
-      // Aggregate analytics
+      // Aggregate sentiment results
       // ----------------------------------------------------------------------
 
       const summary = {
@@ -606,8 +619,6 @@ function createSentimentWorker() {
       };
 
       for (const result of results) {
-        // Polarity
-
         const polarity =
           result.polarity?.label;
 
@@ -620,29 +631,20 @@ function createSentimentWorker() {
           summary[polarity]++;
         }
 
-        // Emotions
-
         if (
-          Array.isArray(
-            result.emotions
-          )
+          Array.isArray(result.emotions)
         ) {
           for (
             const emotion of result.emotions
           ) {
-            if (
-              !emotion?.label
-            ) {
+            if (!emotion?.label) {
               continue;
             }
 
             emotions[emotion.label] =
-              (emotions[emotion.label] || 0) +
-              1;
+              (emotions[emotion.label] || 0) + 1;
           }
         }
-
-        // Stance
 
         const stanceLabel =
           result.stance?.label;
@@ -656,47 +658,28 @@ function createSentimentWorker() {
           stance[stanceLabel]++;
         }
 
-        // Sarcasm
-
         if (
-          result.sarcasm?.detected ===
-          true
+          result.sarcasm?.detected === true
         ) {
           sarcasm.detected++;
         } else if (
-          result.sarcasm?.detected ===
-          false
+          result.sarcasm?.detected === false
         ) {
           sarcasm.notDetected++;
         }
 
-        // Tier usage
-
-        if (
-          result.tier === 1
-        ) {
+        if (result.tier === 1) {
           tierUsage.tier1++;
-        } else if (
-          result.tier === 2
-        ) {
+        } else if (result.tier === 2) {
           tierUsage.tier2++;
         }
       }
 
       // ----------------------------------------------------------------------
-      // Platform summary
+      // Final result
       // ----------------------------------------------------------------------
 
-      const platformCounts =
-        getPlatformCounts(
-          data.events
-        );
-
-      // ----------------------------------------------------------------------
-      // Final derived sentiment result
-      // ----------------------------------------------------------------------
-
-      const result = {
+      const finalResult = {
         category: "sentiment",
 
         eventCount:
@@ -709,7 +692,8 @@ function createSentimentWorker() {
           data.events.length -
           results.length,
 
-        platformCounts,
+        platformCounts:
+          getPlatformCounts(data.events),
 
         summary,
 
@@ -724,17 +708,28 @@ function createSentimentWorker() {
         results,
       };
 
+      const duration =
+        Date.now() - startedAt;
+
       success(
         "Sentiment",
-        `Processed ${results.length}/${data.events.length} events | ` +
+        `DONE job=${job.id} | ` +
+        `${results.length}/${data.events.length} analyzed | ` +
         `Tier1=${tierUsage.tier1} | ` +
-        `Tier2=${tierUsage.tier2}`
+        `Tier2=${tierUsage.tier2} | ` +
+        `${duration}ms`
       );
 
-      return result;
+      return finalResult;
     },
 
-    WORKER_OPTIONS
+    {
+      connection:
+        createBullMQConnection(),
+
+      concurrency:
+        SENTIMENT_CONCURRENCY,
+    }
   );
 }
 
@@ -768,27 +763,23 @@ function createDemographicWorker() {
       );
 
       /*
-       * ----------------------------------------------------------------------
-       * DEMOGRAPHIC IMPLEMENTATION
-       * ----------------------------------------------------------------------
+       * Demographic analysis is currently a placeholder.
        *
-       * Demographic analysis belongs here rather than in the scraper.
+       * The important contract at this stage is:
        *
-       * The canonical raw layer should preserve:
+       *   canonical collection
+       *          ↓
+       *   demographic worker
+       *          ↓
+       *   valid category result
        *
-       *     authorProfiles[]
-       *
-       * without inventing demographic attributes.
-       *
-       * The demographic pipeline can later derive aggregate/anonymized
-       * demographic information from the available evidence.
+       * Actual demographic inference can be implemented independently.
        */
-
       const result = {
         category: "demographic",
 
-        // Placeholder until the demographic implementation is connected.
         topAge: null,
+
         topRegion: null,
 
         eventCount:
@@ -806,7 +797,13 @@ function createDemographicWorker() {
       return result;
     },
 
-    WORKER_OPTIONS
+    {
+      connection:
+        createBullMQConnection(),
+
+      concurrency:
+        ANALYTICS_CONCURRENCY,
+    }
   );
 }
 
@@ -851,7 +848,7 @@ function createTrendWorker() {
       }
 
       // ----------------------------------------------------------------------
-      // Global trend registry
+      // Global trend statistics
       // ----------------------------------------------------------------------
 
       await recordTrendStats(
@@ -864,6 +861,10 @@ function createTrendWorker() {
           localSharedRedis,
           result
         );
+
+      // ----------------------------------------------------------------------
+      // Logging
+      // ----------------------------------------------------------------------
 
       const ranking =
         enriched.globalRanking;
@@ -889,11 +890,18 @@ function createTrendWorker() {
 
       return {
         category: "trend",
+
         ...enriched,
       };
     },
 
-    WORKER_OPTIONS
+    {
+      connection:
+        createBullMQConnection(),
+
+      concurrency:
+        ANALYTICS_CONCURRENCY,
+    }
   );
 }
 
@@ -921,10 +929,21 @@ function createNetworkWorker() {
         `Run=${data.collection.collectionId}`
       );
 
-      // ----------------------------------------------------------------------
-      // Network analysis
-      // ----------------------------------------------------------------------
-
+      /*
+       * IMPORTANT:
+       *
+       * Network analysis is intentionally not being redesigned here.
+       *
+       * We are only validating that the Network worker:
+       *
+       *   1. receives canonical data
+       *   2. executes analyzeNetwork()
+       *   3. returns a valid object
+       *   4. reaches DatabaseQueue
+       *
+       * The current 0-node / 0-edge analytical result will be addressed
+       * separately.
+       */
       const result =
         analyzeNetwork(data);
 
@@ -961,16 +980,23 @@ function createNetworkWorker() {
 
       return {
         category: "network",
+
         ...result,
       };
     },
 
-    WORKER_OPTIONS
+    {
+      connection:
+        createBullMQConnection(),
+
+      concurrency:
+        ANALYTICS_CONCURRENCY,
+    }
   );
 }
 
 // ============================================================================
-// 5. DATABASE / PARENT WORKER
+// 5. DATABASE WORKER
 // ============================================================================
 
 function createDatabaseWorker() {
@@ -978,6 +1004,10 @@ function createDatabaseWorker() {
     "DatabaseQueue",
 
     async (job) => {
+      // ----------------------------------------------------------------------
+      // Validate database parent job
+      // ----------------------------------------------------------------------
+
       if (
         !job?.data ||
         typeof job.data !== "object"
@@ -987,10 +1017,6 @@ function createDatabaseWorker() {
         );
       }
 
-      // ----------------------------------------------------------------------
-      // Parent Job Metadata
-      // ----------------------------------------------------------------------
-
       const {
         trend_label,
         runId,
@@ -998,26 +1024,23 @@ function createDatabaseWorker() {
         schemaVersion,
       } = job.data;
 
-      /*
-       * The Consumer should pass:
-       *
-       *     canonical: data
-       *
-       * to the parent job.
-       */
-
       const canonical =
         job.data.canonical;
 
-      if (!canonical) {
+      if (
+        !canonical ||
+        typeof canonical !== "object"
+      ) {
         throw new Error(
           "Database job is missing canonical collection."
         );
       }
 
-      validateCollection(
-        canonical
-      );
+      validateCollection(canonical);
+
+      // ----------------------------------------------------------------------
+      // Resolve canonical metadata
+      // ----------------------------------------------------------------------
 
       const resolvedRunId =
         runId ??
@@ -1039,16 +1062,38 @@ function createDatabaseWorker() {
       );
 
       // ----------------------------------------------------------------------
-      // Retrieve Child Results
+      // Optional event ID validation
+      // ----------------------------------------------------------------------
+
+      if (
+        eventIds !== undefined &&
+        !Array.isArray(eventIds)
+      ) {
+        throw new Error(
+          "Database job eventIds must be an array when provided."
+        );
+      }
+
+      if (
+        Array.isArray(eventIds) &&
+        eventIds.length !== canonical.events.length
+      ) {
+        throw new Error(
+          `Database event accounting mismatch: ` +
+          `eventIds=${eventIds.length}, ` +
+          `canonical.events=${canonical.events.length}.`
+        );
+      }
+
+      // ----------------------------------------------------------------------
+      // Collect child results
       // ----------------------------------------------------------------------
 
       const childResults =
         await job.getChildrenValues();
 
       const rawValues =
-        Object.values(
-          childResults
-        );
+        Object.values(childResults);
 
       log(
         "Database",
@@ -1056,23 +1101,57 @@ function createDatabaseWorker() {
       );
 
       // ----------------------------------------------------------------------
-      // Structure Analytics
+      // Validate child result count
+      // ----------------------------------------------------------------------
+
+      /*
+       * The current FlowProducer creates exactly four analytics children:
+       *
+       *   sentiment
+       *   demographic
+       *   trend
+       *   network
+       *
+       * DatabaseQueue should therefore receive four results.
+       */
+      const EXPECTED_ANALYTICS_CATEGORIES = [
+        "sentiment",
+        "demographic",
+        "trend",
+        "network",
+      ];
+
+      if (
+        rawValues.length !==
+        EXPECTED_ANALYTICS_CATEGORIES.length
+      ) {
+        throw new Error(
+          `Database expected ` +
+          `${EXPECTED_ANALYTICS_CATEGORIES.length} child results ` +
+          `but received ${rawValues.length}.`
+        );
+      }
+
+      // ----------------------------------------------------------------------
+      // Build analytics object
       // ----------------------------------------------------------------------
 
       const analytics = {};
 
-      for (
-        const result of rawValues
-      ) {
+      for (const result of rawValues) {
         if (
           !result ||
           typeof result !== "object"
         ) {
-          continue;
+          throw new Error(
+            "Database received an invalid child result."
+          );
         }
 
         if (!result.category) {
-          continue;
+          throw new Error(
+            "Database received a child result without category."
+          );
         }
 
         const {
@@ -1081,8 +1160,16 @@ function createDatabaseWorker() {
         } = result;
 
         if (
-          analytics[category]
+          !EXPECTED_ANALYTICS_CATEGORIES.includes(
+            category
+          )
         ) {
+          throw new Error(
+            `Unexpected analytics category '${category}'.`
+          );
+        }
+
+        if (analytics[category]) {
           throw new Error(
             `Duplicate analytics category '${category}'.`
           );
@@ -1093,8 +1180,24 @@ function createDatabaseWorker() {
       }
 
       // ----------------------------------------------------------------------
-      // Optional child-result visibility
+      // Verify every expected category exists
       // ----------------------------------------------------------------------
+
+      const missingCategories =
+        EXPECTED_ANALYTICS_CATEGORIES.filter(
+          (category) =>
+            !Object.prototype.hasOwnProperty.call(
+              analytics,
+              category
+            )
+        );
+
+      if (missingCategories.length > 0) {
+        throw new Error(
+          `Database is missing child analytics: ` +
+          `${missingCategories.join(", ")}`
+        );
+      }
 
       const analyticsCategories =
         Object.keys(analytics);
@@ -1102,11 +1205,32 @@ function createDatabaseWorker() {
       log(
         "Database",
         `Analytics categories: ` +
-        `${analyticsCategories.join(", ") || "none"}`
+        `${analyticsCategories.join(", ")}`
       );
 
       // ----------------------------------------------------------------------
-      // Database Record
+      // Child result validation diagnostics
+      // ----------------------------------------------------------------------
+
+      log(
+        "Database",
+        `Child result validation: ` +
+        `sentiment=${Boolean(analytics.sentiment)}, ` +
+        `demographic=${Boolean(analytics.demographic)}, ` +
+        `trend=${Boolean(analytics.trend)}, ` +
+        `network=${Boolean(analytics.network)}`
+      );
+
+      log(
+        "Database",
+        `Canonical validation: ` +
+        `schema=${resolvedSchemaVersion} | ` +
+        `events=${canonical.events.length} | ` +
+        `run=${resolvedRunId}`
+      );
+
+      // ----------------------------------------------------------------------
+      // Build final database record
       // ----------------------------------------------------------------------
 
       const databaseRecord = {
@@ -1125,63 +1249,52 @@ function createDatabaseWorker() {
         analytics,
       };
 
-      /* ----------------------------------------------------------------------
-       * PostgreSQL Persistence
-       * ----------------------------------------------------------------------
-       *
-       * Inserts or updates (upsert) the databaseRecord into the NeonDB instance.
-       *
-       * Table schema (trend_analytics):
-       *
-       *     id SERIAL PRIMARY KEY
-       *     run_id VARCHAR(255) UNIQUE NOT NULL
-       *     trend_label VARCHAR(255)
-       *     schema_version VARCHAR(50)
-       *     canonical_collection JSONB
-       *     analytics JSONB
-       *     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-       *     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-      */
+      // ----------------------------------------------------------------------
+      // Database persistence
+      // ----------------------------------------------------------------------
 
       /*
-      const query = `
-        INSERT INTO trend_analytics (
-          run_id,
-          trend_label,
-          schema_version,
-          canonical_collection,
-          analytics
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (run_id)
-        DO UPDATE SET
-          trend_label = EXCLUDED.trend_label,
-          schema_version = EXCLUDED.schema_version,
-          canonical_collection = EXCLUDED.canonical_collection,
-          analytics = EXCLUDED.analytics,
-          updated_at = CURRENT_TIMESTAMP
-      `;
+       * PostgreSQL persistence is intentionally not enabled yet.
+       *
+       * DO NOT add an INSERT here until the actual PostgreSQL table schema
+       * is confirmed.
+       *
+       * At this stage we prove that the Database worker successfully
+       * constructs the complete persistence-ready record.
+       */
 
-      await pgClient.query(query, [
-        databaseRecord.run_id,
-        databaseRecord.trend_label,
-        databaseRecord.schema_version,
-        JSON.stringify(databaseRecord.canonical_collection),
-        JSON.stringify(databaseRecord.analytics),
-      ]);
-      */
+      if (
+        !databaseRecord.run_id ||
+        !databaseRecord.trend_label ||
+        !databaseRecord.schema_version ||
+        !databaseRecord.canonical_collection ||
+        !databaseRecord.analytics
+      ) {
+        throw new Error(
+          "Database record construction failed."
+        );
+      }
 
       log(
         "Database",
         `Prepared record | ` +
         `Events=${canonical.events.length} | ` +
-        `Analytics=${analyticsCategories.join(", ") || "none"}`
+        `Analytics=${analyticsCategories.join(", ")}`
+      );
+
+      log(
+        "Database",
+        `Record validation: PASS`
       );
 
       success(
         "Database",
         `Collection ${resolvedRunId} processed successfully.`
       );
+
+      // ----------------------------------------------------------------------
+      // Return database worker result
+      // ----------------------------------------------------------------------
 
       return {
         status: "success",
@@ -1192,14 +1305,26 @@ function createDatabaseWorker() {
         trend_label:
           resolvedTrendLabel,
 
+        schemaVersion:
+          resolvedSchemaVersion,
+
         eventCount:
           canonical.events.length,
 
         analyticsCategories,
+
+        persistence:
+          "prepared",
       };
     },
 
-    WORKER_OPTIONS
+    {
+      connection:
+        createBullMQConnection(),
+
+      concurrency:
+        DATABASE_CONCURRENCY,
+    }
   );
 }
 
@@ -1210,7 +1335,7 @@ function createDatabaseWorker() {
 let workers = [];
 
 // ============================================================================
-// Worker Event Handling
+// Worker Events
 // ============================================================================
 
 function registerWorkerEvents(worker) {
@@ -1246,13 +1371,13 @@ function registerWorkerEvents(worker) {
 }
 
 // ============================================================================
-// Worker Startup
+// Startup
 // ============================================================================
 
 async function startWorkers() {
   try {
     // ------------------------------------------------------------------------
-    // Load sentiment pipeline BEFORE creating workers
+    // Load sentiment pipeline before accepting sentiment jobs
     // ------------------------------------------------------------------------
 
     await loadSentimentPipeline();
@@ -1285,7 +1410,7 @@ async function startWorkers() {
     ];
 
     // ------------------------------------------------------------------------
-    // Register events
+    // Register BullMQ events
     // ------------------------------------------------------------------------
 
     for (const worker of workers) {
@@ -1293,7 +1418,7 @@ async function startWorkers() {
     }
 
     // ------------------------------------------------------------------------
-    // Startup logging
+    // Startup information
     // ------------------------------------------------------------------------
 
     console.log(
@@ -1317,31 +1442,35 @@ async function startWorkers() {
     );
 
     console.log(
-      "  - SentimentQueue"
+      `  - SentimentQueue      concurrency=${SENTIMENT_CONCURRENCY}`
     );
 
     console.log(
-      "  - DemographicQueue"
+      `  - DemographicQueue    concurrency=${ANALYTICS_CONCURRENCY}`
     );
 
     console.log(
-      "  - TrendQueue"
+      `  - TrendQueue          concurrency=${ANALYTICS_CONCURRENCY}`
     );
 
     console.log(
-      "  - NetworkQueue"
+      `  - NetworkQueue        concurrency=${ANALYTICS_CONCURRENCY}`
     );
 
     console.log(
-      "  - DatabaseQueue"
-    );
-
-    console.log(
-      "Concurrency: 5 per worker"
+      `  - DatabaseQueue       concurrency=${DATABASE_CONCURRENCY}`
     );
 
     console.log(
       "Sentiment: loaded"
+    );
+
+    console.log(
+      "Database: aggregation enabled"
+    );
+
+    console.log(
+      "PostgreSQL persistence: not enabled"
     );
 
     console.log(
@@ -1404,17 +1533,10 @@ async function shutdown(signal) {
     );
   }
 
-  /*
-   * pgClient is imported for the PostgreSQL persistence layer.
-   *
-   * Only close it here if this process owns the connection.
-   */
-
   try {
     if (
       pgClient &&
-      typeof pgClient.end ===
-      "function"
+      typeof pgClient.end === "function"
     ) {
       await pgClient.end();
 

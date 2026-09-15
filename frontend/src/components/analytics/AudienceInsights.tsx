@@ -49,29 +49,6 @@ function CardHeader({
   );
 }
 
-// ── Reusable Key Takeaway Bottom Banner Card ──────────────────────────────────
-function KeyTakeawayCard({
-  icon,
-  text,
-}: {
-  icon: React.ReactNode;
-  text: string;
-}) {
-  return (
-    <div className="bg-[#F8FAFC] border border-[#EEF2F6] rounded-xl p-3 sm:p-3.5 flex items-start gap-3 w-full h-[90px] sm:h-[94px]">
-      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-[#EBF3FA] flex items-center justify-center text-[#3B759E] shrink-0 mt-0.5">
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0 flex flex-col justify-center">
-        <span className="text-xs font-bold text-[#1E293B] block leading-tight">Key Takeaway</span>
-        <p className="text-[11px] sm:text-xs leading-relaxed text-[#475569] font-medium mt-1 line-clamp-3">
-          {text}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ── Card 1: Age Distribution ──────────────────────────────────────────────────
 function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const chartData = useMemo(() => {
@@ -80,14 +57,6 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
       share: Math.round((b.male + b.female + b.other) * 10) / 10,
     }));
   }, [trend.demographics.ageGender]);
-
-  const topTwoAges = useMemo(() => {
-    const sorted = [...chartData].sort((a, b) => b.share - a.share);
-    return {
-      top1: sorted[0]?.ageRange ?? "25–34",
-      top2: sorted[1]?.ageRange ?? "18–24",
-    };
-  }, [chartData]);
 
   const yConfig = useMemo(() => {
     const maxVal = Math.max(...chartData.map((d) => d.share), 10);
@@ -118,8 +87,8 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
       />
 
       {/* Bar chart spanning full card width and filling vertical height cleanly */}
-      <div className="flex-1 w-full min-w-0 flex flex-col justify-center my-3 sm:my-4">
-        <div className="w-full h-[300px] sm:h-[335px]">
+      <div className="flex-1 w-full min-w-0 flex flex-col justify-center my-auto py-2">
+        <div className="w-full h-[380px] sm:h-[430px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={chartData}
@@ -163,18 +132,6 @@ function AgeDistributionCard({ trend }: { trend: TrendAnalytics }) {
           </ResponsiveContainer>
         </div>
       </div>
-
-      {/* Key Takeaway at Bottom */}
-      <div className="w-full shrink-0 mt-auto">
-        <KeyTakeawayCard
-          icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-              <path d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7zm-2 18c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h-4v1z" />
-            </svg>
-          }
-          text={`The largest share of engagement comes from ${topTwoAges.top1} year olds, followed by ${topTwoAges.top2} year olds.`}
-        />
-      </div>
     </div>
   );
 }
@@ -207,7 +164,6 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
   const languages = trend.demographics.languages;
   const sorted = useMemo(() => [...languages].sort((a, b) => b.share - a.share), [languages]);
   const topLang = sorted[0] ?? { language: "English", share: 48 };
-  const secondLang = sorted[1] ?? { language: "Hindi", share: 22 };
 
   return (
     <div className="card flex flex-col justify-between p-4 sm:p-5 lg:p-6 h-full">
@@ -224,17 +180,17 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
       />
 
       {/* Donut chart + Legend filling middle space comfortably */}
-      <div className="flex-1 w-full min-w-0 flex items-center justify-between gap-2 sm:gap-3 my-auto py-2">
+      <div className="flex-1 w-full min-w-0 flex items-center justify-between gap-2 sm:gap-3 my-auto py-4">
         {/* Donut chart */}
-        <div className="w-[210px] h-[210px] sm:w-[240px] sm:h-[240px] xl:w-[250px] xl:h-[250px] shrink-0 relative flex items-center justify-center">
+        <div className="w-[220px] h-[220px] sm:w-[250px] sm:h-[250px] xl:w-[265px] xl:h-[265px] shrink-0 relative flex items-center justify-center">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={languages}
                 cx="50%"
                 cy="50%"
-                innerRadius={62}
-                outerRadius={108}
+                innerRadius={66}
+                outerRadius={114}
                 paddingAngle={1.5}
                 dataKey="share"
                 nameKey="language"
@@ -280,7 +236,7 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
         </div>
 
         {/* Legend shifted right with compact, tidy gap to percentages */}
-        <div className="flex flex-col justify-center gap-3 sm:gap-3.5 shrink-0 ml-auto w-[110px] sm:w-[120px] pr-0.5">
+        <div className="flex flex-col justify-center gap-3.5 sm:gap-4 shrink-0 ml-auto w-[110px] sm:w-[120px] pr-0.5">
           {languages.slice(0, 6).map((item, i) => (
             <div key={item.language} className="flex items-center justify-between gap-2.5 text-xs sm:text-[13px]">
               <span className="flex items-center gap-2 text-[#64748B] min-w-0 flex-1">
@@ -292,18 +248,6 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
           ))}
         </div>
       </div>
-
-      {/* Key Takeaway at Bottom */}
-      <div className="w-full shrink-0 mt-auto">
-        <KeyTakeawayCard
-          icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-          }
-          text={`Conversations are largely in ${topLang.language}, followed by ${secondLang.language} and regional languages.`}
-        />
-      </div>
     </div>
   );
 }
@@ -314,8 +258,6 @@ function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
     () => [...trend.demographics.regions].sort((a, b) => b.share - a.share).slice(0, 5),
     [trend.demographics.regions]
   );
-
-  const top3Names = topRegions.slice(0, 3).map((r) => r.state);
 
   return (
     <div className="card flex flex-col justify-between p-4 sm:p-5 lg:p-6 h-full">
@@ -331,7 +273,7 @@ function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
       />
 
       {/* 5 State Progress bars filling vertical space comfortably */}
-      <div className="flex-1 w-full min-w-0 flex flex-col justify-center gap-5 sm:gap-6 my-auto py-2">
+      <div className="flex-1 w-full min-w-0 flex flex-col justify-center gap-6 sm:gap-7 my-auto py-4">
         {topRegions.map((region, i) => (
           <motion.div
             key={region.state}
@@ -365,20 +307,6 @@ function RegionalDistributionCard({ trend }: { trend: TrendAnalytics }) {
             </div>
           </motion.div>
         ))}
-      </div>
-
-      {/* Key Takeaway at Bottom */}
-      <div className="w-full shrink-0 mt-auto">
-        <KeyTakeawayCard
-          icon={
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 20V10" />
-              <path d="M12 20V4" />
-              <path d="M6 20v-6" />
-            </svg>
-          }
-          text={`Highest activity from ${top3Names[0] || "lead states"}, ${top3Names[1] || ""} and ${top3Names[2] || ""}. State-level details available in the Regional Intelligence section.`}
-        />
       </div>
     </div>
   );
