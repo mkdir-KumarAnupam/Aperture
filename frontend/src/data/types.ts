@@ -23,6 +23,7 @@ export interface LifecycleDataPoint {
 }
 
 export type Timeframe = "7D" | "30D" | "90D" | "1Y";
+export type GlobalTimeframe = "6H" | "1D" | "7D" | "30D";
 
 // ── Demographics ──────────────────────────────────────────────────────────────
 export interface AgeGenderBucket {

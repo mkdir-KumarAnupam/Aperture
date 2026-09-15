@@ -34,7 +34,7 @@ export default function TrendReportDeck({
   return (
     <div className="app-shell-100vh">
       {/* ── Fixed Application Header (64px) ──────────────────────────────── */}
-      <header className="report-header-fixed">
+      <header className="report-header-fixed px-6 sm:px-10 lg:px-12">
         {/* Left: Product Name (Apperture — clean wordmark, no icon) */}
         <div className="flex items-center gap-4">
           <button
@@ -142,13 +142,13 @@ export default function TrendReportDeck({
       {/* ── Internal Scroll Container (Single continuous report) ─────────── */}
       <div className="internal-scroll-container">
         {/* Section 1: Trend Overview (70 / 30) */}
-        <TrendOverview trend={trend} />
+        <TrendOverview trend={trend} timeframe={globalTimeframe} />
 
         {/* Section 2: Regional Intelligence (60 / 40) */}
-        <IndiaHeatmap trend={trend} />
+        <IndiaHeatmap trend={trend} timeframe={globalTimeframe} />
 
         {/* Section 3: Sentiment Analysis (70 / 30) */}
-        <SentimentInsights trend={trend} />
+        <SentimentInsights trend={trend} timeframe={globalTimeframe} />
 
         {/* Section 4: Demographics + Platform Trend Growth (40 / 60) */}
         <AudienceInsights trend={trend} timeframe={globalTimeframe} />

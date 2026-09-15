@@ -6,7 +6,8 @@ import {
   Geographies,
   Geography,
 } from "react-simple-maps";
-import { TrendAnalytics } from "@/data/types";
+import { GlobalTimeframe, TrendAnalytics } from "@/data/types";
+import { getTimeframeRegional } from "@/data/timeframeAdapters";
 import { InfluenceTrendCard } from "@/components/analytics/InfluenceNetwork";
 
 const GEO_URL = "/india-states-simplified.json";
@@ -70,7 +71,13 @@ interface TooltipData {
   growth: string;
 }
 
-export default function IndiaHeatmap({ trend }: { trend: TrendAnalytics }) {
+export default function IndiaHeatmap({
+  trend,
+  timeframe = "30D",
+}: {
+  trend: TrendAnalytics;
+  timeframe?: GlobalTimeframe;
+}) {
   const [geoData, setGeoData] = useState<string | Record<string, unknown>>(
     cachedGeoData || GEO_URL
   );
@@ -80,7 +87,10 @@ export default function IndiaHeatmap({ trend }: { trend: TrendAnalytics }) {
   const pointerRef = useRef({ x: 0, y: 0 });
   const hoveredStateRef = useRef<string | null>(null);
 
-  const regionalLookup = useMemo(() => trend.regional, [trend.regional]);
+  const regionalLookup = useMemo(
+    () => getTimeframeRegional(trend.regional, timeframe),
+    [trend.regional, timeframe]
+  );
 
   useEffect(() => {
     if (!cachedGeoData && typeof window !== "undefined") {
@@ -144,24 +154,36 @@ export default function IndiaHeatmap({ trend }: { trend: TrendAnalytics }) {
   const handleZoomOut = () => setZoomScale((z) => Math.max(z * 0.8, 0.75));
 
   return (
-    <section id="section-regional" className="w-full">
+    <section
+      id="section-regional"
+      className="w-full border-b border-slate-200/80 px-6 sm:px-10 lg:px-12 py-6 flex flex-col justify-center"
+      style={{ minHeight: "70vh" }}
+    >
       <div
-        className="grid grid-cols-1 lg:grid-cols-[6fr_4fr] gap-6 items-stretch"
-        style={{ minHeight: "clamp(520px, 68vh, 660px)" }}
+        className="grid grid-cols-1 lg:grid-cols-2 items-stretch h-full"
+        style={{ minHeight: "68vh" }}
       >
-        {/* ── 60% Left: India Map with Vertical Legend ────────────────────── */}
-        <div className="report-card p-5 sm:p-6 flex flex-col justify-between h-full relative overflow-hidden">
-          <div className="flex items-center justify-between mb-1">
+        {/* ── 50% Left: India Map with Vertical Legend ────────────────────── */}
+        <div className="pr-0 lg:pr-8 pb-8 lg:pb-0 flex flex-col justify-between h-full relative border-b lg:border-b-0 lg:border-r border-slate-200/80">
+          <div className="flex items-center justify-between mb-2">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">
               Regional Intelligence
             </h2>
-            <span className="text-[11px] font-semibold text-slate-400">
-              Survey of India Boundary
-            </span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] font-semibold text-slate-400">
+                Survey of India Boundary · {timeframe}
+              </span>
+              <div className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 flex items-center gap-1.5 shadow-2xs">
+                <span>India</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </div>
+            </div>
           </div>
 
           {/* Map canvas container */}
-          <div className="relative flex-1 w-full my-auto flex items-center justify-center overflow-hidden min-h-[420px]">
+          <div className="relative flex-1 w-full my-auto flex items-center justify-center overflow-hidden min-h-[460px]">
             {/* ── Vertical Legend placed on Left / Y-Axis (Exact Reference Layout) ── */}
             <div className="map-vertical-legend">
               <div className="text-[10px] font-bold text-slate-500 uppercase leading-tight">
@@ -199,12 +221,12 @@ export default function IndiaHeatmap({ trend }: { trend: TrendAnalytics }) {
             <ComposableMap
               projection="geoMercator"
               projectionConfig={{
-                scale: 860 * zoomScale,
+                scale: 960 * zoomScale,
                 center: [82.5, 22.5],
               }}
-              width={720}
-              height={560}
-              style={{ width: "100%", height: "100%", maxHeight: 520 }}
+              width={760}
+              height={580}
+              style={{ width: "100%", height: "100%", maxHeight: "62vh" }}
             >
               <Geographies geography={geoData}>
                 {({ geographies }: { geographies: GeoFeature[] }) =>
@@ -247,16 +269,11 @@ export default function IndiaHeatmap({ trend }: { trend: TrendAnalytics }) {
               </Geographies>
             </ComposableMap>
           </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-            <span>Official territorial extent with complete northern representation</span>
-            <span className="font-semibold text-slate-600">36 States &amp; UTs</span>
-          </div>
         </div>
 
-        {/* ── 40% Right: Influence Trend (Existing ForceGraph2D) ──────────── */}
-        <div className="h-full">
-          <InfluenceTrendCard trend={trend} />
+        {/* ── 50% Right: Influence Trend ───────────────────────────────── */}
+        <div className="pl-0 lg:pl-8 pt-8 lg:pt-0 flex flex-col justify-between h-full relative">
+          <InfluenceTrendCard trend={trend} timeframe={timeframe} />
         </div>
       </div>
 
