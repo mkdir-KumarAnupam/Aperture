@@ -771,6 +771,7 @@ const databaseWorker = new Worker(
 
       analytics,
     };
+    console.table(databaseRecord);
 
     /*
      * ------------------------------------------------------------------------

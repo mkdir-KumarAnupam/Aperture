@@ -506,39 +506,6 @@ function prepareMessage(
 // ============================================================================
 
 /**
- * Read messages currently pending for THIS consumer.
- *
- * `XREADGROUP ... 0` retrieves messages pending for this consumer.
- *
- * It does not automatically claim messages belonging to another dead
- * consumer. XAUTOCLAIM can be added later for multi-consumer recovery.
- */
-async function fetchPendingMessages(
-  limit
-) {
-  const response =
-    await upstashRedis.xreadgroup(
-      "GROUP",
-      CONFIG.consumerGroup,
-      CONFIG.consumerName,
-      "COUNT",
-      limit,
-      "STREAMS",
-      CONFIG.streamKey,
-      "0"
-    );
-
-  if (
-    !response ||
-    response.length === 0
-  ) {
-    return [];
-  }
-
-  return response[0]?.[1] ?? [];
-}
-
-/**
  * Read new messages that have not previously been delivered to a consumer
  * in this group.
  */
@@ -843,43 +810,13 @@ async function acknowledgeMessages(
 // Fetch + Prepare
 // ============================================================================
 
-/**
- * Fetch pending messages first, then new messages.
- *
- * Pending messages receive priority so previously delivered but
- * unacknowledged work is not indefinitely starved.
- */
 async function fetchBulkStreamData(
   batchLimit = CONFIG.batchLimit
 ) {
   const allPrepared = [];
 
   // --------------------------------------------------------------------------
-  // 1. Pending messages
-  // --------------------------------------------------------------------------
-
-  const pendingMessages =
-    await fetchPendingMessages(
-      batchLimit
-    );
-
-  if (pendingMessages.length > 0) {
-    logInfo(
-      `Recovering ${pendingMessages.length} pending message(s).`
-    );
-
-    const pendingResult =
-      prepareMessages(
-        pendingMessages
-      );
-
-    allPrepared.push(
-      ...pendingResult.prepared
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // 2. New messages
+  // New messages
   // --------------------------------------------------------------------------
 
   const newMessages =
@@ -922,8 +859,8 @@ async function orchestrateData() {
       "Polling Redis Stream for canonical collections..."
     );
 
-    const records =
-      await fetchBulkStreamData();
+    const records = await fetchBulkStreamData(1);
+    console.table(records);
 
     if (records.length === 0) {
       logInfo(
