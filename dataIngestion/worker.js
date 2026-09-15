@@ -32,6 +32,7 @@ const {
 } = require("./config");
 
 const { analyzeTrend } = require("./trendAnalysis");
+const { googleTrendRegions, googleTrendTimeLine } = require("./demographicAnaylysis.js");
 
 const {
   recordTrendStats,
@@ -636,16 +637,20 @@ function createDemographicWorker() {
       validateCollection(data);
 
       const trendLabel = getTrendLabel(data);
+      const country = "India";
 
-      const profiles = Array.isArray(data.authorProfiles)
-        ? data.authorProfiles
-        : [];
+      const endTime = new Date();
+      const startTime = new Date();
+      startTime.setDate(endTime.getDate() - 30);
+
+      const timelines = await googleTrendTimeLine(trendLabel, country, { startTime, endTime });
+      const regionals = await googleTrendRegions(trendLabel, country, { startTime, endTime });
 
       log(
         "Demographic",
         `Processing ${data.events.length} events | ` +
-          `Profiles=${profiles.length} | ` +
-          `Trend=${trendLabel}`,
+          `TimeLines=${timelines?.timeline?.length} | ` +
+          `Regionals=${regionals?.regions?.length}`,
       );
 
       /*
@@ -663,14 +668,8 @@ function createDemographicWorker() {
        */
       const result = {
         category: "demographic",
-
-        topAge: null,
-
-        topRegion: null,
-
-        eventCount: data.events.length,
-
-        profilesAvailable: profiles.length,
+        timelines,
+        regionals
       };
 
       success("Demographic", `Processed ${data.events.length} events.`);
