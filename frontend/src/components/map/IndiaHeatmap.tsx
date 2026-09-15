@@ -19,20 +19,29 @@ let cachedGeoData: string | Record<string, unknown> | null = null;
 interface GeoFeature {
   rsmKey?: string;
   properties?: {
+    st_nm?: string;
+    ST_NM?: string;
     NAME_1?: string;
     name?: string;
     [key: string]: unknown;
   };
 }
 
-// State name normalizer — GeoJSON uses NAME_1 property
+// State name normalizer — supports official Survey of India names and aliases
 const STATE_NAME_ALIASES: Record<string, string> = {
   Orissa: "Odisha",
   Uttaranchal: "Uttarakhand",
+  "Andaman and Nicobar Islands": "Andaman and Nicobar",
+  "Dadra and Nagar Haveli and Daman and Diu": "Dadra and Nagar Haveli",
 };
 
 function getStateName(geo: GeoFeature): string {
-  const mapName = geo.properties?.NAME_1 ?? geo.properties?.name ?? "";
+  const mapName =
+    geo.properties?.st_nm ??
+    geo.properties?.ST_NM ??
+    geo.properties?.NAME_1 ??
+    geo.properties?.name ??
+    "";
   return STATE_NAME_ALIASES[mapName] ?? mapName;
 }
 
@@ -100,15 +109,25 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
       const stateName = getStateName(geo);
       const data = regionalLookup[stateName];
       positionTooltip(e.clientX, e.clientY);
-      if (data && hoveredStateRef.current !== stateName) {
+      if (hoveredStateRef.current !== stateName) {
         hoveredStateRef.current = stateName;
-        setTooltip({
-          state: stateName,
-          score: data.score,
-          mentions: data.mentions,
-          growth: data.growth,
-          sentiment: data.sentiment,
-        });
+        if (data) {
+          setTooltip({
+            state: stateName,
+            score: data.score,
+            mentions: data.mentions,
+            growth: data.growth,
+            sentiment: data.sentiment,
+          });
+        } else {
+          setTooltip({
+            state: stateName,
+            score: 0,
+            mentions: "No observations",
+            growth: "N/A",
+            sentiment: "neutral",
+          });
+        }
       }
     },
     [regionalLookup, positionTooltip]
@@ -136,7 +155,7 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
                   State-level trend relevance across India · Hover state for details
                 </p>
               </div>
-              <span className="prototype-badge">State-level · Simulated</span>
+              <span className="prototype-badge">Official Boundary · Survey of India</span>
             </div>
           </div>
 
@@ -153,8 +172,8 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
             <ComposableMap
               projection="geoMercator"
               projectionConfig={{
-                scale: 1040,
-                center: [82.5, 22.5],
+                scale: 880,
+                center: [82.5, 22],
               }}
               width={760}
               height={580}
@@ -178,7 +197,7 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
                           default: {
                             fill: fillColor,
                             stroke: "#FFFFFF",
-                            strokeWidth: 0.8,
+                            strokeWidth: 0.6,
                             outline: "none",
                           },
                           hover: {
@@ -214,9 +233,10 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
             <span className="text-[11px] text-gray-400 font-semibold ml-2">Relevance Score</span>
           </div>
 
-          <p className="text-xs pt-2.5 border-t text-gray-400 mt-1" style={{ borderColor: "#EEF2F5" }}>
-            Normalized regional concentration calculated across geographic user signals
-          </p>
+          <div className="flex items-center justify-between text-xs pt-2.5 border-t text-gray-400 mt-1 flex-wrap gap-2" style={{ borderColor: "#EEF2F5" }}>
+            <span>Normalized regional concentration calculated across geographic user signals</span>
+            <span className="text-[11px] font-medium text-slate-400 italic">Map source: Survey of India</span>
+          </div>
         </div>
 
         {/* State rankings panel — spans 1 col */}
@@ -294,30 +314,34 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
           ref={tooltipRef}
           style={{ left: 0, top: 0 }}
         >
-          <p className="font-bold text-sm mb-2">{tooltip.state}</p>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between gap-4">
-              <span style={{ color: "#9BA8B2" }}>Relevance</span>
-              <span className="font-semibold">{tooltip.score}/100</span>
+          <p className="font-bold text-sm mb-1.5">{tooltip.state}</p>
+          {tooltip.mentions === "No observations" ? (
+            <p className="text-xs text-slate-300 italic">No activity observations in current trend dataset</p>
+          ) : (
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between gap-4">
+                <span style={{ color: "#9BA8B2" }}>Relevance</span>
+                <span className="font-semibold">{tooltip.score}/100</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span style={{ color: "#9BA8B2" }}>Mentions</span>
+                <span className="font-semibold">{tooltip.mentions}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span style={{ color: "#9BA8B2" }}>Growth</span>
+                <span className="font-semibold" style={{ color: "#5A9E7C" }}>{tooltip.growth}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span style={{ color: "#9BA8B2" }}>Sentiment</span>
+                <span
+                  className="font-semibold capitalize"
+                  style={{ color: sentimentColor(tooltip.sentiment) }}
+                >
+                  {tooltip.sentiment}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between gap-4">
-              <span style={{ color: "#9BA8B2" }}>Mentions</span>
-              <span className="font-semibold">{tooltip.mentions}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span style={{ color: "#9BA8B2" }}>Growth</span>
-              <span className="font-semibold" style={{ color: "#5A9E7C" }}>{tooltip.growth}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span style={{ color: "#9BA8B2" }}>Sentiment</span>
-              <span
-                className="font-semibold capitalize"
-                style={{ color: sentimentColor(tooltip.sentiment) }}
-              >
-                {tooltip.sentiment}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </FadeInSection>

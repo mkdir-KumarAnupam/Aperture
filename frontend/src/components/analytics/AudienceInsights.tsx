@@ -239,7 +239,7 @@ function LanguageDistributionCard({ trend }: { trend: TrendAnalytics }) {
                 dataKey="share"
                 nameKey="language"
                 labelLine={false}
-                label={<SliceLabel />}
+                label={SliceLabel}
                 isAnimationActive={true}
                 animationBegin={100}
                 animationDuration={900}
