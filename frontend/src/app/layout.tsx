@@ -15,12 +15,12 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "TrendScope India — Social Media Trend Intelligence",
+  title: "Apperture — Social Media Trend Intelligence",
   description:
-    "Understand what India is talking about. TrendScope analyzes social trends across X, Reddit, and Telegram with a focus on the Indian audience. Prototype · Simulated analytics.",
+    "Understand what India is talking about. Apperture analyzes social trends across X, Reddit, and Telegram with a focus on the Indian audience. Research intelligence report.",
   keywords: "social media trends, India, trend intelligence, analytics, X, Reddit, Telegram",
   openGraph: {
-    title: "TrendScope India — Social Media Trend Intelligence",
+    title: "Apperture — Social Media Trend Intelligence",
     description: "Understand what India is talking about across X, Reddit, and Telegram.",
     type: "website",
   },

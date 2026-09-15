@@ -341,9 +341,133 @@ body {
   .analytics-content { min-height: auto; }
 }
 
-/* ─── Presentation Report Deck ───────────────────────────────────────────── */
-#trend-report .analytics-content {
-  min-height: auto;
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
+/* ─── Apperture 100vh Application Shell ────────────────────────────── */
+.app-shell-100vh {
+  height: 100vh;
+  max-height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #F8FAFC;
 }
+
+.report-header-fixed {
+  height: 64px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #E2E8F0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  flex-shrink: 0;
+  z-index: 40;
+}
+
+.internal-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  background: #F8FAFC;
+}
+
+.report-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.report-card:hover {
+  border-color: #CBD5E1;
+}
+
+/* ─── Vertical Map Legend ─────────────────────────────────────────────────── */
+.map-vertical-legend {
+  position: absolute;
+  left: 24px;
+  top: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.map-vertical-bar {
+  width: 10px;
+  height: 110px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #243746 0%, #4A7FA5 35%, #7AABC8 65%, #C8DFE8 85%, #E8F2F8 100%);
+  border: 1px solid #CBD5E1;
+}
+
+/* ─── Zoom Buttons ────────────────────────────────────────────────────────── */
+.map-zoom-control {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 10;
+}
+
+.map-zoom-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  color: #0F172A;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-zoom-btn:hover {
+  background: #F8FAFC;
+  border-color: #94A3B8;
+}
+
+/* ─── Timeframe Pill in Header ────────────────────────────────────────────── */
+.header-timeframe-pill {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.header-timeframe-pill.active {
+  background: #2563EB;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
+}
+
+.header-timeframe-pill.inactive {
+  background: #F1F5F9;
+  color: #64748B;
+}
+
+.header-timeframe-pill.inactive:hover {
+  background: #E2E8F0;
+  color: #1E293B;
+}
+
