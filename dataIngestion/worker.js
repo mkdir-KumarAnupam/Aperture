@@ -1125,24 +1125,23 @@ function createDatabaseWorker() {
         analytics,
       };
 
-      /*
-       * ----------------------------------------------------------------------
+      /* ----------------------------------------------------------------------
        * PostgreSQL Persistence
        * ----------------------------------------------------------------------
        *
-       * Currently disabled.
+       * Inserts or updates (upsert) the databaseRecord into the NeonDB instance.
        *
-       * Enable this INSERT when the PostgreSQL table is ready.
+       * Table schema (trend_analytics):
        *
-       * Recommended table:
-       *
-       *     run_id TEXT PRIMARY KEY
-       *     trend_label TEXT NOT NULL
-       *     schema_version TEXT NOT NULL
-       *     canonical_collection JSONB NOT NULL
-       *     analytics JSONB NOT NULL
-       *     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-       */
+       *     id SERIAL PRIMARY KEY
+       *     run_id VARCHAR(255) UNIQUE NOT NULL
+       *     trend_label VARCHAR(255)
+       *     schema_version VARCHAR(50)
+       *     canonical_collection JSONB
+       *     analytics JSONB
+       *     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+       *     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      */
 
       /*
       const query = `
@@ -1159,19 +1158,16 @@ function createDatabaseWorker() {
           trend_label = EXCLUDED.trend_label,
           schema_version = EXCLUDED.schema_version,
           canonical_collection = EXCLUDED.canonical_collection,
-          analytics = EXCLUDED.analytics
+          analytics = EXCLUDED.analytics,
+          updated_at = CURRENT_TIMESTAMP
       `;
 
       await pgClient.query(query, [
         databaseRecord.run_id,
         databaseRecord.trend_label,
         databaseRecord.schema_version,
-        JSON.stringify(
-          databaseRecord.canonical_collection
-        ),
-        JSON.stringify(
-          databaseRecord.analytics
-        ),
+        JSON.stringify(databaseRecord.canonical_collection),
+        JSON.stringify(databaseRecord.analytics),
       ]);
       */
 
