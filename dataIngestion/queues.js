@@ -1,12 +1,43 @@
-const { Queue } = require('bullmq');
-const { localSharedRedis } = require('./config');
+const { Queue } = require("bullmq");
+const { localSharedRedis } = require("./config");
 
-const defaultOpts = { connection: localSharedRedis };
+const queueOptions = {
+  connection: localSharedRedis,
+  defaultJobOptions: {
+    removeOnComplete: true,
+    removeOnFail: false,
+  },
+};
 
-module.exports = { 
-    SentimentQueue: new Queue('SentimentQueue', defaultOpts), 
-    DemographicQueue: new Queue('DemographicQueue', defaultOpts), 
-    TrendQueue: new Queue('TrendQueue', defaultOpts), 
-    NetworkQueue: new Queue('NetworkQueue', defaultOpts), 
-    DatabaseQueue: new Queue('DatabaseQueue', defaultOpts) // Parent Gatherer
+const SentimentQueue = new Queue(
+  "SentimentQueue",
+  queueOptions
+);
+
+const DemographicQueue = new Queue(
+  "DemographicQueue",
+  queueOptions
+);
+
+const TrendQueue = new Queue(
+  "TrendQueue",
+  queueOptions
+);
+
+const NetworkQueue = new Queue(
+  "NetworkQueue",
+  queueOptions
+);
+
+const DatabaseQueue = new Queue(
+  "DatabaseQueue",
+  queueOptions
+);
+
+module.exports = {
+  SentimentQueue,
+  DemographicQueue,
+  TrendQueue,
+  NetworkQueue,
+  DatabaseQueue,
 };

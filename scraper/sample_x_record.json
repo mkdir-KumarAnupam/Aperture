@@ -1,0 +1,65 @@
+{
+  "eventId": "x:2099567926005354587",
+  "platform": "x",
+  "platformPostId": "2099567926005354587",
+  "source": {
+    "sourceLayer": "keyword_search",
+    "retrievalQuery": "नेहा बोरा",
+    "discoveredTrend": "नेहा बोरा",
+    "observedAt": "2026-09-14T18:36:29.617005+00:00",
+    "collectedAt": "2026-09-14T18:36:29Z",
+    "collectorVersion": "2.0.0"
+  },
+  "content": {
+    "text": "जुलाई में हुए जंतर मंतर आंदोलन के बाद नेहा बोरा बहुत आगे निकल चुकी हैं.\n\nनेहा बोरा खुलकर सामाजिक न्याय, यूजीसी एक्ट, आरक्षण और आदिवासियों के अधिकारों पर बोलती हैं.\n\nनेहा बोरा में लोग भविष्य का नेता देख रहे हैं. लेकिन आज जो नेहा बोरा ने UP के मुख्यमंत्री के बारें में बोला वह भाषा राजनीति में ठीक नही है.\n\nराजनीति में मतभेद या विचारों का मतभेद अपनी जगह है. नेहा बोरा को ऐसी भाषा से बचना चाहिए. नेहा को करोड़ों बहुजन युवा देख सुन रहे हैं, कल को अगर कोई नेहा बोरा से प्रभावित होकर ऐसी भाषा बोलने लगा तो उस पर FIR हो जाएगी.\n\nनेहा बोरा के पीछे वामपंथी संगठन और कांग्रेस पार्टी. आप लोग भूल से भी ऐसी भाषा का प्रयोग मत करना.",
+    "title": null,
+    "language": "hi",
+    "detectedLang": "hi",
+    "languageDetectionConfidence": 1.0,
+    "hashtags": [],
+    "mentions": [],
+    "urls": [],
+    "attachments": null,
+    "contentFingerprint": "55ec128e0aed5ff16b3d06f43b20a207"
+  },
+  "author": {
+    "authorId": "1459884192213311489",
+    "authorHandle": "KraantiKumar",
+    "authorName": "Kranti Kumar",
+    "authorBio": "(जो मीडिया नही दिखाता, वो मैं दिखाता हूँ) Official Twitter Account Of Kranti Kumar. Love To Read And Write HISTORY, CINEMA And POLITICS.",
+    "authorLocation": "Mumbai, India"
+  },
+  "time": {
+    "publishedAt": "2026-09-14T18:36:16+00:00",
+    "observedAt": "2026-09-14T18:36:29.617005+00:00",
+    "editedAt": null
+  },
+  "engagement": {
+    "likes": 0,
+    "replies": 0,
+    "reposts": 0,
+    "quotes": 0,
+    "bookmarks": 0,
+    "views": 512,
+    "impressions": 512
+  },
+  "relationships": {
+    "replyToId": null,
+    "replyToAuthorId": null,
+    "quoteOfId": null,
+    "forwardOfId": null,
+    "conversationId": "x:2099567926005354587"
+  },
+  "platformData": {
+    "possiblySensitive": false,
+    "isEdited": false,
+    "authorFollowers": 133370,
+    "authorVerified": false
+  },
+  "retrieval": {
+    "matchType": "lexical",
+    "matchedTerms": [
+      "नेहा बोरा"
+    ]
+  }
+}

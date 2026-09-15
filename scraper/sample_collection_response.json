@@ -1,0 +1,63 @@
+{
+    "schemaVersion": "1.0.0",
+    "collection": {
+        "collectionId": "example-collection",
+        "startedAt": "2026-09-15T00:00:00Z",
+        "completedAt": "2026-09-15T00:00:05Z",
+        "durationSeconds": 5
+    },
+    "metadata": {
+        "collectorVersion": "2.0.0",
+        "contractPurpose": "raw_public_social_evidence"
+    },
+    "trend": {
+        "trend": "Neha Bora",
+        "rank": 5,
+        "volume": null,
+        "discoveredAt": "2026-09-15T00:00:00Z",
+        "retrieval": {
+            "query": "Neha Bora"
+        }
+    },
+    "platforms": {
+        "x": {
+            "status": "success_with_results",
+            "pagination": {
+                "requestedLimit": 20,
+                "primaryResultsReturned": 20,
+                "relationshipResolutionReturned": 5,
+                "recordsCollected": 25,
+                "stoppedBecause": "limit_reached"
+            },
+            "error": null
+        },
+        "reddit": {
+            "status": "success_empty",
+            "pagination": {
+                "requestedLimit": 20,
+                "primaryResultsReturned": 0,
+                "relationshipResolutionReturned": 0,
+                "recordsCollected": 0,
+                "stoppedBecause": "no_more_results"
+            },
+            "error": null
+        },
+        "telegram": {
+            "status": "unavailable",
+            "pagination": {},
+            "error": {
+                "type": "configuration",
+                "message": "Telegram client is not configured",
+                "retryAfter": null
+            }
+        }
+    },
+    "authorProfiles": [],
+    "communities": [],
+    "quality": {
+        "warnings": [],
+        "errors": [],
+        "recordsCollected": 25
+    },
+    "events": []
+}

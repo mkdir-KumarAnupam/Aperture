@@ -1,0 +1,30 @@
+
+> web@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.21.2.182:3000
+- Environments: .env
+✓ Ready in 314ms
+✓ Running next.config.ts took 66ms
+
+ GET / 200 in 1273ms (next.js: 173ms, application-code: 1100ms)
+ GET /api/network/graph 200 in 127ms (next.js: 96ms, application-code: 31ms)
+ GET /api/hashtags/cooccurrence 200 in 131ms (next.js: 115ms, application-code: 15ms)
+ GET /api/demographics 200 in 135ms (next.js: 75ms, application-code: 60ms)
+ GET /api/trends/lifecycle 200 in 143ms (next.js: 49ms, application-code: 94ms)
+ GET /api/demographics 200 in 25ms (next.js: 9ms, application-code: 16ms)
+ GET /api/trends/lifecycle 200 in 48ms (next.js: 21ms, application-code: 26ms)
+ GET /api/network/graph 200 in 8ms (next.js: 5ms, application-code: 3ms)
+ GET /api/hashtags/cooccurrence 200 in 4ms (next.js: 1.9ms, application-code: 2ms)
+ GET / 200 in 199ms (next.js: 8ms, application-code: 191ms)
+ GET /api/demographics 200 in 19ms (next.js: 5ms, application-code: 14ms)
+ GET /api/trends/lifecycle 200 in 23ms (next.js: 3ms, application-code: 20ms)
+ GET /api/network/graph 200 in 13ms (next.js: 4ms, application-code: 9ms)
+ GET /api/hashtags/cooccurrence 200 in 12ms (next.js: 7ms, application-code: 5ms)
+ GET /api/demographics 200 in 12ms (next.js: 5ms, application-code: 8ms)
+ GET /api/trends/lifecycle 200 in 21ms (next.js: 9ms, application-code: 12ms)
+ GET /api/network/graph 200 in 9ms (next.js: 1.5ms, application-code: 7ms)
+ GET /api/hashtags/cooccurrence 200 in 9ms (next.js: 3ms, application-code: 7ms)
+[?25h

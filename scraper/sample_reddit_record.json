@@ -1,0 +1,74 @@
+{
+  "eventId": "t3_1vi0rg0",
+  "platform": "reddit",
+  "platformPostId": "t3_1vi0rg0",
+  "source": {
+    "sourceLayer": "keyword_search",
+    "retrievalQuery": "नेहा बोरा",
+    "discoveredTrend": "नेहा बोरा",
+    "observedAt": "2026-09-14T18:36:34.066409+00:00",
+    "collectedAt": "2026-09-14T18:36:34Z",
+    "collectorVersion": "2.0.0"
+  },
+  "content": {
+    "text": "",
+    "title": "झारखंड में विरोध प्रदर्शन के दौरान बवाल, AISA प्रमुख नेहा बोरा पर स्याही फेंकने का आरोप हिरासत में",
+    "language": null,
+    "detectedLang": "hi",
+    "languageDetectionConfidence": 1.0,
+    "hashtags": [],
+    "mentions": [],
+    "urls": [],
+    "attachments": null,
+    "contentFingerprint": "e15a25e8359755e6c059b9c660fcb65d"
+  },
+  "author": {
+    "authorId": "t2_13wxdq7xog",
+    "authorHandle": "AajTak",
+    "authorName": null,
+    "authorBio": null,
+    "authorLocation": null
+  },
+  "time": {
+    "publishedAt": "2026-08-07T13:32:28+00:00",
+    "observedAt": "2026-09-14T18:36:34.066409+00:00",
+    "editedAt": null
+  },
+  "engagement": {
+    "likes": 8,
+    "replies": 0,
+    "reposts": null,
+    "quotes": null,
+    "bookmarks": null,
+    "views": null,
+    "impressions": null
+  },
+  "relationships": {
+    "replyToId": null,
+    "replyToAuthorId": null,
+    "quoteOfId": null,
+    "forwardOfId": null,
+    "conversationId": null
+  },
+  "platformData": {
+    "subreddit": "AajTakHindiNews",
+    "subredditSubscribers": 2172,
+    "upvoteRatio": 0.99,
+    "linkFlairText": "India",
+    "isSelf": false,
+    "externalUrl": "https://v.redd.it/qaxljuuigyhh1",
+    "permalink": "/r/AajTakHindiNews/comments/1vi0rg0/झरखड_म_वरध_परदरशन_क_दरन_बवल_aisa_परमख_नह_बर_पर/",
+    "over18": false,
+    "spoiler": false,
+    "stickied": false,
+    "removedByCategory": null,
+    "downvotes": 0,
+    "score": 8
+  },
+  "retrieval": {
+    "matchType": "direct_match",
+    "matchedTerms": [
+      "नेहा बोरा"
+    ]
+  }
+}

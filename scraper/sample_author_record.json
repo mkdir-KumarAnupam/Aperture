@@ -1,0 +1,19 @@
+{
+  "platform": "x",
+  "authorId": "44196397",
+  "handle": "elonmusk",
+  "name": "Elon Musk",
+  "bio": "https://t.co/ZdBx5WABYx",
+  "location": null,
+  "followerCount": 241661730,
+  "verified": false,
+  "accountAge": "2009-06-02T20:12:29+00:00",
+  "observedAt": "2026-09-14T18:36:34.626563+00:00",
+  "profileImageUrl": "https://pbs.twimg.com/profile_images/2053244804520427520/m8mdWZCG_normal.jpg",
+  "platformData": {
+    "pinnedTweetId": "2098932438055469451",
+    "url": "",
+    "followingCount": 1406,
+    "tweetCount": 108554
+  }
+}

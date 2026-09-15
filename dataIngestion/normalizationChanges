@@ -1,0 +1,221 @@
+What Changed — normalizeData()
+
+The normalization layer has been updated to work with the new Canonical Schema v1.0.0 produced by the scraper and daemon.
+
+Previously, normalizeData() was designed around the older scraper output, where fields such as authorId, impressionCount, replyCount, timestamp, and sourceLayer existed directly on the post object. The new implementation now reads the structured canonical event format.
+
+Major changes
+
+1. Added Telegram support
+
+Telegram is now handled as a first-class platform instead of falling through to the generic/unknown platform handler.
+
+X → normalizeX()
+Reddit → normalizeReddit()
+Telegram → normalizeTelegram()
+
+⸻
+
+2. Updated X/Twitter naming
+
+The normalized platform name is now:
+
+x
+
+instead of:
+
+twitter
+
+Legacy "twitter" input can still be detected for compatibility.
+
+⸻
+
+3. Updated field mappings to Canonical Schema v1.0.0
+
+The normalizer now reads data from the canonical nested structures:
+
+event.content.*
+event.author.*
+event.engagement.*
+event.relationships.*
+event.source.*
+event.time.*
+event.platformData.*
+
+instead of the previous flat structure.
+
+Examples:
+
+post.authorId
+        ↓
+post.author.authorId
+post.replyToId
+        ↓
+post.relationships.replyToId
+post.sourceLayer
+        ↓
+post.source.sourceLayer
+post.timestamp
+        ↓
+post.time.publishedAt
+post.text
+        ↓
+post.content.text
+
+⸻
+
+4. Fixed X engagement field mapping
+
+The old implementation expected retweets. The canonical schema uses:
+
+reposts
+
+The normalizer now uses:
+
+engagement.reposts
+
+It also reads:
+
+engagement.likes
+engagement.replies
+engagement.quotes
+engagement.bookmarks
+engagement.views
+engagement.impressions
+
+⸻
+
+5. Removed fabricated metric defaults
+
+The previous implementation could convert missing metrics into zero.
+
+For example:
+
+missing likes → 0
+missing retweets → 0
+
+This has been changed so that unavailable values remain:
+
+null
+
+This preserves the distinction between:
+
+0    = source explicitly reported zero
+null = source did not provide the metric
+
+This is important because downstream analytics should not mistake missing information for actual zero engagement.
+
+⸻
+
+6. Improved timestamp handling
+
+toIsoOrNull() now supports:
+
+* ISO 8601 timestamps
+* Epoch seconds
+* Epoch milliseconds
+* Redis Stream IDs
+
+This fixes the previous situation where valid canonical ISO timestamps could incorrectly become null.
+
+velocityWindow is calculated only when both publishedAt and observedAt are valid.
+
+⸻
+
+7. Updated relationship handling
+
+Relationships are now read from the canonical structure:
+
+relationships.conversationId
+relationships.replyToId
+relationships.quoteOfId
+relationships.forwardOfId
+relationships.crosspostOfId
+
+This allows replies, forwards, quotes, and cross-platform relationships to be represented consistently.
+
+⸻
+
+8. Improved Reddit normalization
+
+Reddit now consumes the canonical Reddit event structure and supports:
+
+* canonical engagement fields
+* upvote ratio
+* upvotes/downvotes when available
+* subreddit subscriber count as an explicitly supplied reach proxy
+* canonical relationships
+* canonical hashtags
+* platform-specific Reddit data
+
+Subreddit subscribers are not incorrectly treated as author reach.
+
+⸻
+
+9. Added Telegram normalization
+
+Telegram normalization now handles:
+
+* message content
+* author information
+* reactions
+* replies
+* views when explicitly available
+* relationships
+* timestamps
+* hashtags
+* URLs
+* mentions
+* platform-specific data
+
+Telegram does not currently receive an approvalScore or voteConfidence because those metrics don’t have an equivalent meaning in the current Telegram canonical event.
+
+⸻
+
+10. Preserved arrays correctly
+
+Fields such as:
+
+hashtags
+urls
+mentions
+
+remain arrays.
+
+Missing arrays become:
+
+[]
+
+rather than being converted into strings or JSON-encoded arrays.
+
+⸻
+
+11. Safer malformed-data handling
+
+Individual malformed or missing fields no longer cause the normalization process to fail.
+
+They are converted to:
+
+null
+
+where appropriate.
+
+The only case that still throws an error is when normalizeData() itself receives something that isn’t an object at all.
+
+⸻
+
+Result
+
+The normalization boundary is now:
+
+X / Reddit / Telegram
+        ↓
+Canonical Schema v1.0.0
+        ↓
+normalizeData()
+        ↓
+Unified NormalizedPost
+        ↓
+Downstream processing / analytics
+
+This separates raw collection concerns from downstream analytics concerns and ensures that all three platforms enter the processing pipeline through a consistent structure without silently inventing missing data.

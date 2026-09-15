@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["schemaVersion", "collection", "trend", "platforms", "events", "authorProfiles", "communities", "quality"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "collection": {
+      "type": "object",
+      "required": ["collectionId", "startedAt", "completedAt", "observedAt", "collectorVersion"],
+      "properties": {
+        "collectionId": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "observedAt": { "type": "string" },
+        "collectorVersion": { "type": "string" }
+      }
+    },
+    "trend": {
+      "type": "object",
+      "required": ["label", "discoveredAt"],
+      "properties": {
+        "label": { "type": "string" },
+        "rank": { "type": ["integer", "null"] },
+        "volume": { "type": ["integer", "null"] },
+        "volumeSource": { "type": ["string", "null"] },
+        "discoveredAt": { "type": "string" }
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status", "pagination"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["success_with_results", "success_empty", "rate_limited", "unavailable", "error"]
+          },
+          "pagination": {
+            "type": "object",
+            "required": ["requestedLimit", "primaryResultsReturned", "relationshipRecordsCollected", "recordsCollected", "pagesFetched", "hasMore", "stoppedBecause"],
+            "properties": {
+              "requestedLimit": { "type": "integer" },
+              "primaryResultsReturned": { "type": "integer" },
+              "relationshipRecordsCollected": { "type": "integer" },
+              "recordsCollected": { "type": "integer" },
+              "pagesFetched": { "type": "integer" },
+              "hasMore": { "type": "boolean" },
+              "stoppedBecause": {
+                "type": "string",
+                "enum": ["limit_reached", "no_more_results", "rate_limited", "platform_error", "platform_unavailable", "cancelled"]
+              }
+            }
+          },
+          "diagnostics": {
+            "type": ["object", "null"],
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "retryable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["eventId", "platform", "platformPostId", "source", "content", "author", "time", "engagement", "relationships", "platformData", "retrieval", "rawSource"],
+        "properties": {
+          "eventId": { "type": "string" },
+          "platform": { "type": "string", "enum": ["x", "reddit", "telegram"] },
+          "platformPostId": { "type": "string" },
+          "source": { "type": "object" },
+          "content": { "type": "object" },
+          "author": { "type": "object" },
+          "time": {
+            "type": "object",
+            "required": ["publishedAt", "observedAt", "editedAt"],
+            "properties": {
+              "publishedAt": { "type": ["string", "null"] },
+              "observedAt": { "type": "string" },
+              "editedAt": { "type": ["string", "null"] }
+            }
+          },
+          "engagement": { "type": "object" },
+          "relationships": { "type": "object" },
+          "platformData": { "type": "object" },
+          "rawSource": { "type": "object" },
+          "retrieval": { "type": "object" }
+        }
+      }
+    },
+    "authorProfiles": { "type": "array" },
+    "communities": { "type": "array" },
+    "quality": {
+      "type": "object",
+      "required": ["recordsCollected", "primaryRecordsCollected", "relationshipRecordsCollected", "warnings", "errors"],
+      "properties": {
+        "primaryRecordsCollected": { "type": "integer" },
+        "relationshipRecordsCollected": { "type": "integer" },
+        "recordsCollected": { "type": "integer" },
+        "warnings": { "type": "array" },
+        "errors": { "type": "array" }
+      }
+    }
+  }
+}

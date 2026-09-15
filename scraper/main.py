@@ -1,498 +1,1729 @@
-from fastapi import FastAPI, HTTPException
-import os
-import re
-import httpx
-import json
-from datetime import datetime
-from dotenv import load_dotenv
-from twikit import Client
-from langdetect import detect, LangDetectException
+"""
+Aperture Social Scraper API.
 
-load_dotenv()
+The only FastAPI entry point.
 
-app = FastAPI(title="Social Scraper API")
+Responsibilities:
+    - HTTP routes
+    - request validation
+    - HTTP-level error mapping
+    - canonical collection envelopes
 
-x_client = Client("en-IN")
-auth_token = os.getenv("X_AUTH_TOKEN")
-ct0 = os.getenv("X_CT0")
+Platform scraping and normalization live in:
+    app/clients/x.py
+    app/clients/reddit.py
+    app/clients/telegram.py
 
-if auth_token and ct0:
-    x_client.set_cookies({"auth_token": auth_token, "ct0": ct0})
-else:
-    print("Warning: X_AUTH_TOKEN or X_CT0 not found in environment.")
+This module does not perform demographic inference,
+trend classification, caching, or raw-data transformation.
+"""
 
-os.makedirs("data/raw", exist_ok=True)
+from datetime import datetime, timezone
 
-def dump_raw_data(prefix: str, data):
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"data/raw/{prefix}_{timestamp}.json"
-        with open(filename, "w", encoding="utf-8") as f:
-            if isinstance(data, list) and hasattr(data[0], '__dict__'):
-                # Twikit object serialization
-                json.dump([vars(obj) for obj in data], f, default=str, indent=2)
-            else:
-                json.dump(data, f, default=str, indent=2)
-    except Exception as e:
-        print(f"Failed to dump raw data: {e}")
+from fastapi import FastAPI, HTTPException, Query
 
-reddit_session = os.getenv("REDDIT_SESSION")
-if not reddit_session:
-    print("Warning: REDDIT_SESSION not found in environment. Reddit scraping may be blocked.")
+from app.config import logger
 
-def get_reddit_client():
-    headers = {"User-Agent": "python:social-analytics-framework:v1.0.0 (by /u/developer)"}
-    cookies = {"reddit_session": reddit_session} if reddit_session else {}
-    return httpx.AsyncClient(headers=headers, cookies=cookies)
+from app.clients.x import (
+    fetch_x_trends,
+    fetch_x_tweets,
+    fetch_x_author,
+)
 
+from app.clients.reddit import (
+    get_reddit_client,
+    fetch_reddit_search,
+    fetch_reddit_comments,
+    fetch_reddit_author,
+    fetch_subreddit,
+    normalize_reddit_post,
+    RedditRateLimitError,
+    RedditAuthError,
+    RedditPermissionError,
+    RedditNotFoundError,
+    RedditUpstreamError,
+)
 
-REGION_MAP = {
-    "india": "India",
-    "mumbai": "Maharashtra", "pune": "Maharashtra", "nagpur": "Maharashtra", "maharashtra": "Maharashtra",
-    "delhi": "Delhi", "new delhi": "Delhi", "ncr": "Delhi",
-    "bangalore": "Karnataka", "bengaluru": "Karnataka", "karnataka": "Karnataka", "mysore": "Karnataka",
-    "hyderabad": "Telangana", "telangana": "Telangana",
-    "chennai": "Tamil Nadu", "coimbatore": "Tamil Nadu", "tamil nadu": "Tamil Nadu",
-    "kolkata": "West Bengal", "west bengal": "West Bengal",
-    "ahmedabad": "Gujarat", "surat": "Gujarat", "gujarat": "Gujarat",
-    "jaipur": "Rajasthan", "rajasthan": "Rajasthan",
-    "lucknow": "Uttar Pradesh", "kanpur": "Uttar Pradesh", "noida": "Uttar Pradesh", "up": "Uttar Pradesh", "uttar pradesh": "Uttar Pradesh",
-    "chandigarh": "Punjab/Haryana", "punjab": "Punjab/Haryana", "haryana": "Punjab/Haryana", "gurgaon": "Punjab/Haryana",
-    "bhopal": "Madhya Pradesh", "indore": "Madhya Pradesh", "madhya pradesh": "Madhya Pradesh",
-    "patna": "Bihar", "bihar": "Bihar",
-    "kerala": "Kerala", "kochi": "Kerala", "trivandrum": "Kerala",
-    "andhra pradesh": "Andhra Pradesh", "vizag": "Andhra Pradesh"
-}
-
-PROFESSION_KEYWORDS = {
-    "journalist": ["journalist", "reporter", "editor", "correspondent", "news", "media"],
-    "politician": ["politician", "minister", "mp", "mla", "councillor", "senator", "congress", "bjp", "aap"],
-    "activist": ["activist", "advocate", "campaigner", "human rights"],
-    "developer": ["developer", "engineer", "coder", "programmer", "software", "web dev", "backend", "frontend"],
-    "student": ["student", "university", "college", "studying", "undergrad", "phd"],
-    "entrepreneur": ["entrepreneur", "founder", "ceo", "startup", "co-founder"],
-    "artist": ["artist", "musician", "singer", "actor", "actress", "painter", "filmmaker"],
-    "content_creator": ["youtuber", "blogger", "influencer", "content creator", "vlogger"],
-    "sports": ["cricketer", "player", "athlete", "coach", "sports", "football"],
-    "doctor": ["doctor", "physician", "surgeon", "medical", "mbbs", "md"],
-    "lawyer": ["lawyer", "advocate", "attorney", "legal", "supreme court", "high court"],
-}
-
-CATEGORY_KEYWORDS = {
-    "Politics": ["bjp", "congress", "modi", "rahul", "election", "minister", "parliament", "vote",
-                 "mla", "mp", "party", "government", "opposition", "political", "resign",
-                 "protest", "rally", "amit shah", "kejriwal", "yogi", "abvp", "nda", "india bloc"],
-    "Entertainment": ["movie", "song", "actor", "actress", "film", "drama", "album", "trailer",
-                      "bollywood", "tollywood", "kollywood", "ott", "netflix", "release",
-                      "music", "dance", "celebrity", "star", "concert"],
-    "Sports": ["cricket", "match", "ipl", "goal", "team", "player", "football", "tennis",
-               "world cup", "innings", "wicket", "run", "captain", "bcci", "score",
-               "stadium", "tournament", "league", "olympic", "hbd"],
-    "Tech": ["ai", "app", "launch", "phone", "update", "software", "google", "apple",
-             "startup", "tech", "android", "ios", "chatgpt", "robot", "chip",
-             "processor", "mediatek", "snapdragon", "samsung", "nvidia"],
-}
-
-def detect_language(text: str) -> str:
-    try:
-        return detect(text)
-    except LangDetectException:
-        return "unknown"
-
-def extract_hashtags(text: str) -> list:
-    return re.findall(r'#(\w+)', text)
-
-def parse_region(location: str) -> str:
-    if not location:
-        return None
-    loc_lower = location.lower().strip()
-    for keyword, region in REGION_MAP.items():
-        if keyword in loc_lower:
-            return region
-    return "Other"
-
-def parse_profession(bio: str) -> str:
-    if not bio:
-        return None
-    bio_lower = bio.lower()
-    for profession, keywords in PROFESSION_KEYWORDS.items():
-        for kw in keywords:
-            if kw in bio_lower:
-                return profession
-    return None
-
-def classify_trend(label: str, tweets_text: list) -> str:
-    combined = (label + " " + " ".join(tweets_text)).lower()
-    scores = {}
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in combined)
-        scores[category] = score
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "Other"
+from app.clients.telegram import (
+    fetch_telegram_search,
+)
 
 
-@app.get("/scrape/reddit/trends")
-async def get_reddit_trends():
-    subreddits = [
-        "india", "mumbai", "delhi", "bollywood", "unitedstatesofindia",
-        "Indiasocial", "IndianStockMarket", "developersIndia", "IndianGaming",
-        "BollyBlindsNGossip", "pune", "bangalore", "hyderabad", "kolkata"
-    ]
-    posts = []
+# ============================================================================
+# Configuration
+# ============================================================================
 
-    async with get_reddit_client() as client:
-        for sub in subreddits:
-            import asyncio
-            await asyncio.sleep(2)
-            try:
-                url = f"https://www.reddit.com/r/{sub}/hot.json?limit=5"
-                res = await client.get(url, timeout=10)
-                res.raise_for_status()
-                data = res.json()
-                for post in data.get("data", {}).get("children", []):
-                    title = post.get("data", {}).get("title", "")
-                    score = post.get("data", {}).get("score", 0)
-                    subreddit_name = post.get("data", {}).get("subreddit", "")
-                    if title:
-                        posts.append({"title": title, "score": score, "subreddit": subreddit_name})
-            except Exception as e:
-                print(f"Failed to fetch Reddit hot from {sub}: {e}")
+SCHEMA_VERSION = "1.0.0"
+COLLECTOR_VERSION = "2.1.0"
 
-    posts.sort(key=lambda x: x["score"], reverse=True)
-    formatted_trends = []
-    for index, p in enumerate(posts[:10]):
-        formatted_trends.append({
-            "platform": "reddit",
-            "label": p["title"],
-            "volume": p["score"],
-            "rank": index + 1,
-            "subreddit": p["subreddit"]
-        })
-    return {"status": "success", "data": formatted_trends}
+app = FastAPI(
+    title="Aperture Social Scraper API",
+    version=COLLECTOR_VERSION,
+)
 
 
+# ============================================================================
+# Time
+# ============================================================================
+
+def utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+# ============================================================================
+# Canonical collection envelope
+# ============================================================================
+
+def canonical_collection(
+    collection=None,
+    trend=None,
+    platforms=None,
+    events=None,
+    author_profiles=None,
+    communities=None,
+    warnings=None,
+    errors=None,
+):
+    events = (
+        events
+        if isinstance(events, list)
+        else []
+    )
+
+    author_profiles = (
+        author_profiles
+        if isinstance(author_profiles, list)
+        else []
+    )
+
+    communities = (
+        communities
+        if isinstance(communities, list)
+        else []
+    )
+
+    warnings = (
+        warnings
+        if isinstance(warnings, list)
+        else []
+    )
+
+    errors = (
+        errors
+        if isinstance(errors, list)
+        else []
+    )
+
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+
+        "collection": (
+            collection
+            if isinstance(collection, dict)
+            else {}
+        ),
+
+        "trend": (
+            trend
+            if isinstance(trend, dict)
+            else {}
+        ),
+
+        "platforms": (
+            platforms
+            if isinstance(platforms, dict)
+            else {}
+        ),
+
+        "events": events,
+
+        "authorProfiles": author_profiles,
+
+        "communities": communities,
+
+        "quality": {
+            "recordsCollected": len(events),
+            "warnings": warnings,
+            "errors": errors,
+        },
+    }
+
+
+# ============================================================================
+# Canonical validation
+# ============================================================================
+
+def ensure_canonical_result(
+    result,
+    collection,
+    trend=None,
+    platform=None,
+    requested_limit=None,
+):
+    """
+    Accept an already-canonical client result.
+
+    This is used only by clients that return a complete
+    canonical collection envelope.
+
+    Platform-level clients such as Telegram search,
+    X trends, and X tweet search are wrapped explicitly
+    by their routes.
+    """
+
+    if not isinstance(result, dict):
+
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                platform: {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": requested_limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "invalid_client_response"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": platform,
+                "operation": "collection",
+                "errorType": "InvalidClientResponse",
+                "message": (
+                    "Platform client returned "
+                    "a non-object response."
+                ),
+            }],
+        )
+
+    if result.get("schemaVersion") != SCHEMA_VERSION:
+
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            f"a non-canonical response"
+        )
+
+    events = result.get(
+        "events",
+        [],
+    )
+
+    if not isinstance(
+        events,
+        list,
+    ):
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            "`events` that is not an array"
+        )
+
+    author_profiles = result.get(
+        "authorProfiles",
+        [],
+    )
+
+    if not isinstance(
+        author_profiles,
+        list,
+    ):
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            "`authorProfiles` that is not an array"
+        )
+
+    communities = result.get(
+        "communities",
+        [],
+    )
+
+    if not isinstance(
+        communities,
+        list,
+    ):
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            "`communities` that is not an array"
+        )
+
+    platform_block = result.get(
+        "platforms",
+        {},
+    )
+
+    if not isinstance(
+        platform_block,
+        dict,
+    ):
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            "`platforms` that is not an object"
+        )
+
+    quality = result.get(
+        "quality",
+        {},
+    )
+
+    if not isinstance(
+        quality,
+        dict,
+    ):
+        raise ValueError(
+            f"{platform or 'platform'} client returned "
+            "`quality` that is not an object"
+        )
+
+    warnings = quality.get(
+        "warnings",
+        [],
+    )
+
+    if not isinstance(
+        warnings,
+        list,
+    ):
+        warnings = []
+
+    errors = quality.get(
+        "errors",
+        [],
+    )
+
+    if not isinstance(
+        errors,
+        list,
+    ):
+        errors = []
+
+    return canonical_collection(
+        collection=result.get(
+            "collection",
+            collection,
+        ),
+        trend=result.get(
+            "trend",
+            trend or {},
+        ),
+        platforms=platform_block,
+        events=events,
+        author_profiles=author_profiles,
+        communities=communities,
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+# ============================================================================
+# Platform-level result helpers
+# ============================================================================
+
+def wrap_platform_result(
+    *,
+    result,
+    collection,
+    trend,
+    platform,
+    operation,
+    requested_limit=None,
+):
+    """
+    Convert a platform-level client result into the
+    canonical collection envelope.
+
+    Expected client shape:
+
+        {
+            "status": "...",
+            "events": [...],
+            "pagination": {...},
+            "authorProfiles": [...]
+        }
+
+    The FastAPI layer owns the final canonical envelope.
+    """
+
+    if not isinstance(result, dict):
+
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                platform: {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": requested_limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "invalid_client_response"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": platform,
+                "operation": operation,
+                "errorType": "InvalidClientResponse",
+                "message": (
+                    f"{platform} client returned "
+                    "a non-object response"
+                ),
+            }],
+        )
+
+    events = result.get(
+        "events",
+        [],
+    )
+
+    if not isinstance(
+        events,
+        list,
+    ):
+
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                platform: {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": requested_limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "invalid_client_response"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": platform,
+                "operation": operation,
+                "errorType": "InvalidClientResponse",
+                "message": (
+                    f"{platform} client returned "
+                    "`events` that is not an array"
+                ),
+            }],
+        )
+
+    author_profiles = result.get(
+        "authorProfiles",
+        [],
+    )
+
+    if not isinstance(
+        author_profiles,
+        list,
+    ):
+        author_profiles = []
+
+    pagination = result.get(
+        "pagination",
+        {},
+    )
+
+    if not isinstance(
+        pagination,
+        dict,
+    ):
+        pagination = {}
+
+    status = result.get(
+        "status",
+        "success_empty",
+    )
+
+    if not isinstance(
+        status,
+        str,
+    ):
+        status = "error"
+
+    errors = []
+
+    platform_error = result.get(
+        "error"
+    )
+
+    if platform_error is not None:
+
+        if isinstance(
+            platform_error,
+            dict,
+        ):
+
+            errors.append({
+                "platform": platform,
+                "operation": operation,
+                "errorType": (
+                    platform_error.get("type")
+                    or platform_error.get("errorType")
+                    or "PlatformError"
+                ),
+                "message": (
+                    platform_error.get("message")
+                    or f"{platform} operation failed"
+                ),
+                "retryAfter": (
+                    platform_error.get("retryAfter")
+                ),
+            })
+
+        else:
+
+            errors.append({
+                "platform": platform,
+                "operation": operation,
+                "errorType": "PlatformError",
+                "message": str(
+                    platform_error
+                ),
+            })
+
+    return canonical_collection(
+        collection=collection,
+        trend=trend,
+        platforms={
+            platform: {
+                "status": status,
+                "pagination": pagination,
+            }
+        },
+        events=events,
+        author_profiles=author_profiles,
+        errors=errors,
+    )
+
+
+# ============================================================================
+# Reddit HTTP error mapping
+# ============================================================================
+
+def reddit_http_exception(
+    exc,
+    operation: str,
+):
+    if isinstance(
+        exc,
+        RedditRateLimitError,
+    ):
+        return HTTPException(
+            status_code=429,
+            detail={
+                "type": "REDDIT_RATE_LIMITED",
+                "operation": operation,
+                "message": str(exc),
+                "retryAfter": exc.retry_after,
+            },
+        )
+
+    if isinstance(
+        exc,
+        RedditAuthError,
+    ):
+        return HTTPException(
+            status_code=401,
+            detail={
+                "type": "REDDIT_AUTH_ERROR",
+                "operation": operation,
+                "message": str(exc),
+            },
+        )
+
+    if isinstance(
+        exc,
+        RedditPermissionError,
+    ):
+        return HTTPException(
+            status_code=403,
+            detail={
+                "type": "REDDIT_PERMISSION_ERROR",
+                "operation": operation,
+                "message": str(exc),
+            },
+        )
+
+    if isinstance(
+        exc,
+        RedditNotFoundError,
+    ):
+        return HTTPException(
+            status_code=404,
+            detail={
+                "type": "REDDIT_NOT_FOUND",
+                "operation": operation,
+                "message": str(exc),
+            },
+        )
+
+    if isinstance(
+        exc,
+        RedditUpstreamError,
+    ):
+        return HTTPException(
+            status_code=502,
+            detail={
+                "type": "REDDIT_UPSTREAM_ERROR",
+                "operation": operation,
+                "message": str(exc),
+            },
+        )
+
+    return HTTPException(
+        status_code=502,
+        detail={
+            "type": "REDDIT_ERROR",
+            "operation": operation,
+            "message": str(exc),
+        },
+    )
+
+
+# ============================================================================
+# Health
+# ============================================================================
+
+@app.get("/health")
+async def health():
+
+    return {
+        "status": "ok",
+        "schemaVersion": SCHEMA_VERSION,
+        "collectorVersion": COLLECTOR_VERSION,
+    }
+
+
+# ============================================================================
+# X / Trends
+# ============================================================================
 
 @app.get("/scrape/x/trends")
 async def get_x_trends():
-    try:
-        trends = await x_client.get_trends('trending', count=20)
-        formatted_trends = []
-        for index, trend in enumerate(trends):
-            vol = getattr(trend, 'tweet_volume', None)
-            if vol is None:
-                vol = getattr(trend, 'tweet_count', None)
-            try:
-                vol = int(vol) if vol else 0
-            except (ValueError, TypeError):
-                vol = 0
-            formatted_trends.append({
-                "platform": "x",
-                "label": trend.name,
-                "volume": vol,
-                "rank": index + 1
-            })
-        return {"status": "success", "data": formatted_trends}
-    except Exception as e:
-        print(f"Twikit error fetching trends: {e}. Falling back to mock data.")
-        mock_trends = [
-            {"platform": "x", "label": "AI Startups", "volume": 125000, "rank": 1},
-            {"platform": "x", "label": "#Nextjs", "volume": 98000, "rank": 2},
-            {"platform": "x", "label": "FastAPI", "volume": 75000, "rank": 3},
-            {"platform": "x", "label": "Python", "volume": 65000, "rank": 4},
-            {"platform": "x", "label": "Tech Layoffs", "volume": 42000, "rank": 5},
-            {"platform": "x", "label": "IndieHackers", "volume": 38000, "rank": 6},
-            {"platform": "x", "label": "OpenAI", "volume": 35000, "rank": 7},
-            {"platform": "x", "label": "#BuildInPublic", "volume": 30000, "rank": 8},
-            {"platform": "x", "label": "Machine Learning", "volume": 25000, "rank": 9},
-            {"platform": "x", "label": "Web Development", "volume": 22000, "rank": 10}
-        ]
-        return {"status": "success", "data": mock_trends}
 
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": "x:trends",
+        "platformsRequested": ["x"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    try:
+
+        result = await fetch_x_trends()
+
+    except Exception as exc:
+
+        logger.exception(
+            "x_trends_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": None,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": "platform_error",
+                    },
+                }
+            },
+            errors=[{
+                "platform": "x",
+                "operation": "trends",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    if not isinstance(
+        result,
+        dict,
+    ):
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": None,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "invalid_client_response"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": "x",
+                "operation": "trends",
+                "errorType": "InvalidClientResponse",
+                "message": (
+                    "X trends client returned "
+                    "a non-object response"
+                ),
+            }],
+        )
+
+    trends = result.get(
+        "trends"
+    )
+
+    if not isinstance(
+        trends,
+        list,
+    ):
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": None,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "invalid_client_response"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": "x",
+                "operation": "trends",
+                "errorType": "InvalidClientResponse",
+                "message": (
+                    "X trends client returned "
+                    "`trends` that is not an array"
+                ),
+            }],
+        )
+
+    pagination = result.get(
+        "pagination",
+        {},
+    )
+
+    if not isinstance(
+        pagination,
+        dict,
+    ):
+        pagination = {}
+
+    status = result.get(
+        "status",
+        "success_empty",
+    )
+
+    if not isinstance(
+        status,
+        str,
+    ):
+        status = "error"
+
+    errors = []
+
+    platform_error = result.get(
+        "error"
+    )
+
+    if platform_error is not None:
+
+        if isinstance(
+            platform_error,
+            dict,
+        ):
+
+            errors.append({
+                "platform": "x",
+                "operation": "trends",
+                "errorType": (
+                    platform_error.get("type")
+                    or platform_error.get("errorType")
+                    or "PlatformError"
+                ),
+                "message": (
+                    platform_error.get("message")
+                    or "X trends search failed"
+                ),
+                "retryAfter": (
+                    platform_error.get("retryAfter")
+                ),
+            })
+
+        else:
+
+            errors.append({
+                "platform": "x",
+                "operation": "trends",
+                "errorType": "PlatformError",
+                "message": str(
+                    platform_error
+                ),
+            })
+
+    return canonical_collection(
+        collection=collection,
+        trend={},
+        platforms={
+            "x": {
+                "status": status,
+                "trends": trends,
+                "pagination": pagination,
+            }
+        },
+        events=[],
+        errors=errors,
+    )
+
+
+# ============================================================================
+# X / Tweets
+# ============================================================================
 
 @app.get("/scrape/x/tweets")
-async def get_x_tweets(keyword: str, count: int = 20):
+async def get_x_tweets(
+
+    keyword: str = Query(
+        ...,
+        min_length=1,
+        max_length=200,
+    ),
+
+    limit: int = Query(
+        30,
+        ge=1,
+        le=100,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": f"x:{keyword}",
+        "platformsRequested": ["x"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    trend = {
+        "trendId": f"trend:{keyword}",
+        "label": keyword,
+        "query": keyword,
+        "rank": None,
+        "volume": None,
+        "volumeSource": None,
+        "discoveredAt": None,
+    }
+
     try:
-        tweets = await x_client.search_tweet(keyword, product='Top', count=count)
-        if tweets:
-            dump_raw_data("x_tweets", [t._payload for t in tweets])
-        formatted_tweets = []
-        for tweet in tweets:
-            text = tweet.text or ""
-            hashtags = extract_hashtags(text)
-            lang = detect_language(text)
 
-            reply_to_author_id = None
-            reply_to_id = None
-            if hasattr(tweet, 'in_reply_to_user_id') and tweet.in_reply_to_user_id:
-                reply_to_author_id = str(tweet.in_reply_to_user_id)
-                reply_to_id = str(tweet.in_reply_to_status_id) if hasattr(tweet, 'in_reply_to_status_id') and tweet.in_reply_to_status_id else None
-            elif hasattr(tweet, 'in_reply_to') and tweet.in_reply_to:
-                reply_to_author_id = str(tweet.in_reply_to)
+        result = await fetch_x_tweets(
+            keyword,
+            limit,
+        )
 
-            forward_from_id = None
-            if hasattr(tweet, 'retweeted_tweet') and tweet.retweeted_tweet:
-                forward_from_id = str(tweet.retweeted_tweet.id) if hasattr(tweet.retweeted_tweet, 'id') else None
+    except Exception as exc:
 
-            quote_tweet_id = None
-            if hasattr(tweet, 'quote') and tweet.quote:
-                quote_tweet_id = str(tweet.quote.id) if hasattr(tweet.quote, 'id') else None
-            elif hasattr(tweet, 'quoted_tweet') and tweet.quoted_tweet:
-                quote_tweet_id = str(tweet.quoted_tweet.id) if hasattr(tweet.quoted_tweet, 'id') else None
+        logger.exception(
+            "x_tweets_failed"
+        )
 
-            # Get conversation ID (usually a list, take first if exists, else tweet id)
-            conv_id = None
-            if hasattr(tweet, 'conversation_ids') and tweet.conversation_ids:
-                conv_id = str(tweet.conversation_ids[0])
-            elif hasattr(tweet, 'conversation_id') and tweet.conversation_id:
-                conv_id = str(tweet.conversation_id)
-            else:
-                conv_id = str(tweet.id)
+        collection["completedAt"] = utc_now()
 
-            # Get attachments
-            attachments = []
-            if hasattr(tweet, 'media') and tweet.media:
-                for m in tweet.media:
-                    if hasattr(m, 'media_url_https'):
-                        attachments.append(m.media_url_https)
-            attachments_str = json.dumps(attachments) if attachments else None
-
-            formatted_tweets.append({
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": "platform_error",
+                    },
+                }
+            },
+            errors=[{
                 "platform": "x",
-                "postId": str(tweet.id),
-                "authorId": str(tweet.user.id),
-                "authorHandle": tweet.user.screen_name,
-                "authorLocation": tweet.user.location,
-                "text": text,
-                "timestamp": tweet.created_at,
-                "language": tweet.lang,
-                "detectedLang": lang,
-                "hashtags": hashtags,
-                "engagement": {
-                    "likes": tweet.favorite_count or 0,
-                    "retweets": tweet.retweet_count or 0,
-                    "replies": tweet.reply_count or 0,
-                    "quotes": tweet.quote_count or 0
-                },
-                "replyCount": tweet.reply_count or 0,
-                "quoteCount": tweet.quote_count or 0,
-                "bookmarkCount": getattr(tweet, 'bookmark_count', 0),
-                "impressionCount": getattr(tweet, 'view_count', 0) or 0,
-                "conversationId": conv_id,
-                "possiblySensitive": getattr(tweet, 'possibly_sensitive', False),
-                "attachments": attachments_str,
-                "replyToId": reply_to_id,
-                "replyToAuthorId": reply_to_author_id,
-                "forwardFromId": forward_from_id,
-                "quoteTweetId": quote_tweet_id,
-                "sourceLayer": "keyword_search"
-            })
-        return {"status": "success", "data": formatted_tweets}
-    except Exception as e:
-        print(f"Twikit error fetching tweets: {e}. Falling back to mock data.")
-        mock_tweets = [
-            {
-                "platform": "x", "postId": f"mock_t_{i}", "authorId": f"mock_u_{i}", 
-                "authorHandle": f"user_{i}", "authorLocation": "India", 
-                "text": f"This is a mock tweet about {keyword} #test", "timestamp": datetime.now(),
-                "language": "en", "detectedLang": "en", "hashtags": ["test"],
-                "engagement": {"likes": 100, "retweets": 20, "replies": 5, "quotes": 1},
-                "replyCount": 5, "quoteCount": 1, "bookmarkCount": 10, "impressionCount": 5000,
-                "conversationId": f"mock_t_{i}", "possiblySensitive": False, "attachments": None,
-                "replyToId": None, "replyToAuthorId": None, "forwardFromId": None, "quoteTweetId": None,
-                "sourceLayer": "keyword_search"
-            } for i in range(10)
-        ]
-        return {"status": "success", "data": mock_tweets}
+                "operation": "tweets",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
 
+    collection["completedAt"] = utc_now()
+
+    # X tweet search is a platform-level client result:
+    #
+    # {
+    #     "status": "success",
+    #     "events": [...],
+    #     "pagination": {...}
+    # }
+    #
+    # Therefore it must be wrapped here rather than passed
+    # through ensure_canonical_result().
+
+    return wrap_platform_result(
+        result=result,
+        collection=collection,
+        trend=trend,
+        platform="x",
+        operation="tweets",
+        requested_limit=limit,
+    )
+
+
+# ============================================================================
+# X / Author
+# ============================================================================
 
 @app.get("/scrape/x/author")
-async def get_x_author(handle: str):
+async def get_x_author(
+
+    handle: str = Query(
+        ...,
+        min_length=1,
+        max_length=100,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": f"x:author:{handle}",
+        "platformsRequested": ["x"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
     try:
-        user = await x_client.get_user_by_screen_name(handle)
-        bio = user.description or ""
-        location = user.location or ""
 
-        formatted_author = {
-            "platform": "x",
-            "authorId": str(user.id),
-            "handle": user.screen_name,
-            "name": getattr(user, 'name', None),
-            "profileImageUrl": getattr(user, 'profile_image_url', None),
-            "pinnedTweetId": str(user.pinned_tweet_ids[0]) if hasattr(user, 'pinned_tweet_ids') and user.pinned_tweet_ids else None,
-            "url": getattr(user, 'url', None),
-            "bio": bio,
-            "location": location,
-            "region": parse_region(location),
-            "followerCount": user.followers_count,
-            "verified": user.verified,
-            "accountAge": user.created_at
-        }
-        return {"status": "success", "data": formatted_author}
-    except Exception as e:
-        print(f"Twikit error fetching author: {e}. Falling back to mock data.")
-        mock_author = {
-            "platform": "x", "authorId": "mock_u_1", "handle": handle, "name": f"Mock {handle}",
-            "profileImageUrl": None, "pinnedTweetId": None, "url": None, "bio": "A mock bio for testing",
-            "location": "India", "region": "India", "followerCount": 5000, "verified": True,
-            "accountAge": datetime.now()
-        }
-        return {"status": "success", "data": mock_author}
+        result = await fetch_x_author(
+            handle
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "x_author_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {},
+                }
+            },
+            errors=[{
+                "platform": "x",
+                "operation": "author",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    try:
+
+        return ensure_canonical_result(
+            result,
+            collection=collection,
+            platform="x",
+        )
+
+    except ValueError as exc:
+
+        logger.error(
+            "x_author_noncanonical_response",
+            extra={
+                "errorType": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "x": {
+                    "status": "error",
+                    "pagination": {},
+                }
+            },
+            errors=[{
+                "platform": "x",
+                "operation": "author",
+                "errorType": "InvalidClientResponse",
+                "message": str(exc),
+            }],
+        )
 
 
-@app.post("/process/classify-trend")
-async def classify_trend_endpoint(data: dict):
-    label = data.get("label", "")
-    tweets_text = data.get("tweets_text", [])
-    category = classify_trend(label, tweets_text)
-    return {"category": category}
-
+# ============================================================================
+# Reddit / Search
+# ============================================================================
 
 @app.get("/scrape/reddit/search")
-async def get_reddit_search(keyword: str, limit: int = 15):
-    url = f"https://www.reddit.com/search.json?q={keyword}&limit={limit}&sort=relevance"
-    async with get_reddit_client() as client:
-        try:
-            response = await client.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            dump_raw_data("reddit_search", data)
-            posts = data.get("data", {}).get("children", [])
-            formatted_posts = []
-            for post in posts:
-                pd = post.get("data", {})
-                text = (pd.get("title", "") + " " + pd.get("selftext", "")).strip()
-                hashtags = extract_hashtags(text)
-                lang = detect_language(text)
-                formatted_posts.append({
-                    "platform": "reddit",
-                    "postId": pd.get("id"),
-                    "authorId": pd.get("author_fullname") or pd.get("author"),
-                    "authorHandle": pd.get("author"),
-                    "text": text,
-                    "timestamp": datetime.fromtimestamp(pd.get("created_utc", 0)),
-                    "language": None,
-                    "detectedLang": lang,
-                    "hashtags": hashtags,
-                    "subreddit": pd.get("subreddit"),
-                    "title": pd.get("title", ""),
-                    "upvoteRatio": pd.get("upvote_ratio"),
-                    "numComments": pd.get("num_comments"),
-                    "linkFlairText": pd.get("link_flair_text"),
-                    "isSelf": pd.get("is_self"),
-                    "externalUrl": pd.get("url"),
-                    "permalink": pd.get("permalink"),
-                    "crosspostParentId": pd.get("crosspost_parent"),
-                    "engagement": {
-                        "upvotes": pd.get("ups", 0),
-                        "downvotes": pd.get("downs", 0),
-                        "score": pd.get("score", 0),
-                        "comments": pd.get("num_comments", 0)
+async def get_reddit_search(
+
+    keyword: str = Query(
+        ...,
+        min_length=1,
+        max_length=200,
+    ),
+
+    limit: int = Query(
+        15,
+        ge=1,
+        le=100,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": (
+            f"reddit:search:{keyword}"
+        ),
+        "platformsRequested": ["reddit"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    trend = {
+        "trendId": f"trend:{keyword}",
+        "label": keyword,
+        "query": keyword,
+        "rank": None,
+        "volume": None,
+        "volumeSource": None,
+        "discoveredAt": None,
+    }
+
+    try:
+
+        async with get_reddit_client() as client:
+
+            result = await fetch_reddit_search(
+                client,
+                keyword,
+                limit,
+            )
+
+    except Exception as exc:
+
+        logger.exception(
+            "reddit_search_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        error = reddit_http_exception(
+            exc,
+            "search",
+        )
+
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                "reddit": {
+                    "status": (
+                        "rate_limited"
+                        if error.status_code == 429
+                        else "error"
+                    ),
+                    "pagination": {
+                        "requestedLimit": limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "rate_limited"
+                            if error.status_code == 429
+                            else "platform_error"
+                        ),
                     },
-                    "subreddit": pd.get("subreddit"),
-                    "title": pd.get("title"),
-                    "upvoteRatio": pd.get("upvote_ratio"),
-                    "numComments": pd.get("num_comments"),
-                    "linkFlairText": pd.get("link_flair_text"),
-                    "isSelf": pd.get("is_self"),
-                    "externalUrl": pd.get("url"),
-                    "permalink": pd.get("permalink"),
-                    "over18": pd.get("over_18"),
-                    "spoiler": pd.get("spoiler"),
-                    "stickied": pd.get("stickied"),
-                    "replyToId": None,
-                    "replyToAuthorId": None,
-                    "forwardFromId": None,
-                    "sourceLayer": "keyword_search"
-                })
-            return {"status": "success", "data": formatted_posts}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch Reddit search: {str(e)}")
+                    "diagnostics": {
+                        "code": (
+                            error.detail.get(
+                                "type",
+                                "REDDIT_ERROR",
+                            )
+                            if isinstance(
+                                error.detail,
+                                dict,
+                            )
+                            else "REDDIT_ERROR"
+                        ),
+                        "message": str(exc),
+                        "retryable": (
+                            error.status_code == 429
+                            or error.status_code >= 500
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": "reddit",
+                "operation": "search",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    events = result.get(
+        "events",
+        [],
+    )
+
+    author_profiles = result.get(
+        "authorProfiles",
+        [],
+    )
+
+    pagination = result.get(
+        "pagination",
+        {},
+    )
+
+    status = result.get(
+        "status",
+        "success_empty",
+    )
+
+    return canonical_collection(
+        collection=collection,
+        trend=trend,
+        platforms={
+            "reddit": {
+                "status": status,
+                "pagination": (
+                    pagination
+                    if isinstance(
+                        pagination,
+                        dict,
+                    )
+                    else {}
+                ),
+            }
+        },
+        events=events,
+        author_profiles=author_profiles,
+    )
+
+
+# ============================================================================
+# Reddit / Comments
+# ============================================================================
 
 @app.get("/scrape/reddit/comments")
-async def get_reddit_comments(post_id: str, limit: int = 100):
-    url = f"https://www.reddit.com/comments/{post_id}.json?limit={limit}"
-    async with get_reddit_client() as client:
-        try:
-            response = await client.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            dump_raw_data("reddit_comments", data)
-            if len(data) < 2:
-                return {"status": "success", "data": []}
+async def get_reddit_comments(
 
-            comments_raw = data[1].get("data", {}).get("children", [])
-            formatted_comments = []
+    post_id: str = Query(
+        ...,
+        min_length=1,
+        max_length=30,
+    ),
 
-            def parse_comments(comment_list, parent_id, depth):
-                for c in comment_list:
-                    if c.get("kind") != "t1":
-                        continue
-                    cd = c.get("data", {})
-                    author = cd.get("author")
-                    body = cd.get("body", "")
-                    cid = cd.get("id")
+    limit: int = Query(
+        100,
+        ge=1,
+        le=100,
+    ),
+):
 
-                    if author and body:
-                        formatted_comments.append({
-                            "platform": "reddit",
-                            "postId": cid,
-                            "authorId": cd.get("author_fullname") or author,
-                            "authorHandle": author,
-                            "text": body,
-                            "timestamp": datetime.fromtimestamp(cd.get("created_utc", 0)),
-                            "engagement": {
-                                "upvotes": cd.get("ups", 0),
-                                "score": cd.get("score", 0)
-                            },
-                            "replyToId": parent_id,
-                            "depth": depth,
-                            "isSubmitter": cd.get("is_submitter", False),
-                            "subreddit": cd.get("subreddit"),
-                            "permalink": cd.get("permalink"),
-                            "sourceLayer": "comment_tree"
-                        })
+    started_at = utc_now()
 
-                    replies = cd.get("replies")
-                    if replies and isinstance(replies, dict):
-                        children = replies.get("data", {}).get("children", [])
-                        parse_comments(children, cid, depth + 1)
+    collection = {
+        "collectionId": (
+            f"reddit:comments:{post_id}"
+        ),
+        "platformsRequested": ["reddit"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
 
-            parse_comments(comments_raw, post_id, 1)
-            return {"status": "success", "data": formatted_comments}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch Reddit comments: {str(e)}")
+    try:
 
+        async with get_reddit_client() as client:
+
+            result = await fetch_reddit_comments(
+                client,
+                post_id,
+                limit,
+            )
+
+    except Exception as exc:
+
+        logger.exception(
+            "reddit_comments_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        error = reddit_http_exception(
+            exc,
+            "comments",
+        )
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "reddit": {
+                    "status": (
+                        "rate_limited"
+                        if error.status_code == 429
+                        else "error"
+                    ),
+                    "pagination": {
+                        "requestedLimit": limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "rate_limited"
+                            if error.status_code == 429
+                            else "platform_error"
+                        ),
+                    },
+                    "diagnostics": {
+                        "code": (
+                            error.detail.get(
+                                "type",
+                                "REDDIT_ERROR",
+                            )
+                            if isinstance(
+                                error.detail,
+                                dict,
+                            )
+                            else "REDDIT_ERROR"
+                        ),
+                        "message": str(exc),
+                        "retryable": (
+                            error.status_code == 429
+                            or error.status_code >= 500
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": "reddit",
+                "operation": "comments",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    events = result.get(
+        "events",
+        [],
+    )
+
+    author_profiles = result.get(
+        "authorProfiles",
+        [],
+    )
+
+    pagination = result.get(
+        "pagination",
+        {},
+    )
+
+    status = result.get(
+        "status",
+        "success_empty",
+    )
+
+    return canonical_collection(
+        collection=collection,
+        platforms={
+            "reddit": {
+                "status": status,
+                "pagination": (
+                    pagination
+                    if isinstance(
+                        pagination,
+                        dict,
+                    )
+                    else {}
+                ),
+            }
+        },
+        events=events,
+        author_profiles=author_profiles,
+    )
+
+
+# ============================================================================
+# Reddit / Author
+# ============================================================================
 
 @app.get("/scrape/reddit/author")
-async def get_reddit_author(handle: str):
-    url = f"https://www.reddit.com/user/{handle}/about.json"
-    async with get_reddit_client() as client:
-        try:
-            response = await client.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            ud = data.get("data", {})
-            bio = ud.get("subreddit", {}).get("public_description", "")
-            formatted_author = {
+async def get_reddit_author(
+
+    handle: str = Query(
+        ...,
+        min_length=1,
+        max_length=50,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": (
+            f"reddit:author:{handle}"
+        ),
+        "platformsRequested": ["reddit"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    try:
+
+        async with get_reddit_client() as client:
+
+            result = await fetch_reddit_author(
+                client,
+                handle,
+            )
+
+    except Exception as exc:
+
+        logger.exception(
+            "reddit_author_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        error = reddit_http_exception(
+            exc,
+            "author",
+        )
+
+        return canonical_collection(
+            collection=collection,
+            platforms={
+                "reddit": {
+                    "status": (
+                        "rate_limited"
+                        if error.status_code == 429
+                        else "error"
+                    ),
+                    "pagination": {},
+                    "diagnostics": {
+                        "code": (
+                            error.detail.get(
+                                "type",
+                                "REDDIT_ERROR",
+                            )
+                            if isinstance(
+                                error.detail,
+                                dict,
+                            )
+                            else "REDDIT_ERROR"
+                        ),
+                        "message": str(exc),
+                        "retryable": (
+                            error.status_code == 429
+                            or error.status_code >= 500
+                        ),
+                    },
+                }
+            },
+            events=[],
+            errors=[{
                 "platform": "reddit",
-                "authorId": ud.get("id") or ud.get("name"),
-                "handle": ud.get("name"),
-                "bio": bio,
-                "location": None,
-                "region": None,
-                "followerCount": ud.get("subreddit", {}).get("subscribers", 0),
-                "verified": ud.get("verified", False),
-                "accountAge": datetime.fromtimestamp(ud.get("created_utc", 0)) if ud.get("created_utc") else None,
-                "linkKarma": ud.get("link_karma"),
-                "commentKarma": ud.get("comment_karma"),
-                "isGold": ud.get("is_gold"),
-                "isMod": ud.get("is_mod")
+                "operation": "author",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    events = result.get(
+        "events",
+        [],
+    )
+
+    author_profiles = result.get(
+        "authorProfiles",
+        [],
+    )
+
+    pagination = result.get(
+        "pagination",
+        {},
+    )
+
+    status = result.get(
+        "status",
+        "success_empty",
+    )
+
+    return canonical_collection(
+        collection=collection,
+        platforms={
+            "reddit": {
+                "status": status,
+                "pagination": (
+                    pagination
+                    if isinstance(
+                        pagination,
+                        dict,
+                    )
+                    else {}
+                ),
             }
-            return {"status": "success", "data": formatted_author}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch Reddit author: {str(e)}")
+        },
+        events=events,
+        author_profiles=author_profiles,
+    )
 
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+# ============================================================================
+# Reddit / Subreddit
+# ============================================================================
+
+@app.get("/scrape/reddit/subreddit")
+async def get_reddit_subreddit(
+
+    subreddit: str = Query(
+        ...,
+        min_length=1,
+        max_length=100,
+    ),
+
+    limit: int = Query(
+        25,
+        ge=1,
+        le=100,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": (
+            f"reddit:subreddit:{subreddit}"
+        ),
+        "platformsRequested": ["reddit"],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    try:
+
+        async with get_reddit_client() as client:
+
+            raw = await fetch_subreddit(
+                client,
+                subreddit,
+                limit,
+            )
+
+    except Exception as exc:
+
+        logger.exception(
+            "reddit_subreddit_failed"
+        )
+
+        error = reddit_http_exception(
+            exc,
+            "subreddit",
+        )
+
+        return canonical_collection(
+            collection={
+                **collection,
+                "completedAt": utc_now(),
+            },
+            platforms={
+                "reddit": {
+                    "status": (
+                        "rate_limited"
+                        if error.status_code == 429
+                        else "error"
+                    ),
+                    "pagination": {
+                        "requestedLimit": limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "rate_limited"
+                            if error.status_code == 429
+                            else "platform_error"
+                        ),
+                    },
+                }
+            },
+            errors=[{
+                "platform": "reddit",
+                "operation": "subreddit",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    raw_data = (
+        raw.get("data")
+        if isinstance(
+            raw,
+            dict,
+        )
+        else None
+    )
+
+    children = (
+        raw_data.get("children")
+        if isinstance(
+            raw_data,
+            dict,
+        )
+        else []
+    )
+
+    if not isinstance(
+        children,
+        list,
+    ):
+        children = []
+
+    events = []
+
+    for child in children:
+
+        if not isinstance(
+            child,
+            dict,
+        ):
+            continue
+
+        if child.get("kind") != "t3":
+            continue
+
+        data = child.get(
+            "data"
+        )
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            continue
+
+        event = normalize_reddit_post(
+            data,
+            keyword=f"r/{subreddit}",
+        )
+
+        if event is not None:
+
+            events.append(
+                event
+            )
+
+        if len(events) >= limit:
+            break
+
+    after = (
+        raw_data.get("after")
+        if isinstance(
+            raw_data,
+            dict,
+        )
+        else None
+    )
+
+    collection["completedAt"] = utc_now()
+
+    return canonical_collection(
+        collection=collection,
+        platforms={
+            "reddit": {
+                "status": (
+                    "success_with_results"
+                    if events
+                    else "success_empty"
+                ),
+                "pagination": {
+                    "requestedLimit": limit,
+                    "primaryResultsReturned": len(
+                        events
+                    ),
+                    "relationshipRecordsCollected": 0,
+                    "recordsCollected": len(
+                        events
+                    ),
+                    "pagesFetched": 1,
+                    "hasMore": bool(after),
+                    "stoppedBecause": (
+                        "limit_reached"
+                        if len(events) >= limit
+                        else "no_more_results"
+                    ),
+                },
+            }
+        },
+        events=events,
+    )
+
+
+# ============================================================================
+# Telegram / Search
+# ============================================================================
+
+@app.get("/scrape/telegram/search")
+async def get_telegram_search(
+
+    keyword: str = Query(
+        ...,
+        min_length=1,
+        max_length=200,
+    ),
+
+    limit: int = Query(
+        30,
+        ge=1,
+        le=100,
+    ),
+):
+
+    started_at = utc_now()
+
+    collection = {
+        "collectionId": (
+            f"telegram:search:{keyword}"
+        ),
+        "platformsRequested": [
+            "telegram"
+        ],
+        "startedAt": started_at,
+        "completedAt": None,
+    }
+
+    trend = {
+        "trendId": f"trend:{keyword}",
+        "label": keyword,
+        "query": keyword,
+        "rank": None,
+        "volume": None,
+        "volumeSource": None,
+        "discoveredAt": None,
+    }
+
+    try:
+
+        result = await fetch_telegram_search(
+            keyword,
+            limit,
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "telegram_search_failed"
+        )
+
+        collection["completedAt"] = utc_now()
+
+        return canonical_collection(
+            collection=collection,
+            trend=trend,
+            platforms={
+                "telegram": {
+                    "status": "error",
+                    "pagination": {
+                        "requestedLimit": limit,
+                        "primaryResultsReturned": 0,
+                        "relationshipRecordsCollected": 0,
+                        "recordsCollected": 0,
+                        "pagesFetched": 0,
+                        "hasMore": None,
+                        "stoppedBecause": (
+                            "platform_error"
+                        ),
+                    },
+                }
+            },
+            events=[],
+            errors=[{
+                "platform": "telegram",
+                "operation": "search",
+                "errorType": type(exc).__name__,
+                "message": str(exc),
+            }],
+        )
+
+    collection["completedAt"] = utc_now()
+
+    return wrap_platform_result(
+        result=result,
+        collection=collection,
+        trend=trend,
+        platform="telegram",
+        operation="search",
+        requested_limit=limit,
+    )
