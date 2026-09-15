@@ -35,6 +35,46 @@ const STATE_NAME_ALIASES: Record<string, string> = {
   "Dadra and Nagar Haveli and Daman and Diu": "Dadra and Nagar Haveli",
 };
 
+// Complete official list of 36 Indian States and Union Territories (Survey of India standard)
+const ALL_INDIA_STATES_AND_UTS = [
+  "Andaman and Nicobar Islands",
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chandigarh",
+  "Chhattisgarh",
+  "Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jammu and Kashmir",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Ladakh",
+  "Lakshadweep",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Puducherry",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
+] as const;
+
 function getStateName(geo: GeoFeature): string {
   const mapName =
     geo.properties?.st_nm ??
@@ -43,6 +83,19 @@ function getStateName(geo: GeoFeature): string {
     geo.properties?.name ??
     "";
   return STATE_NAME_ALIASES[mapName] ?? mapName;
+}
+
+function getRegionalItem(
+  regional: TrendAnalytics["regional"],
+  stateName: string
+) {
+  if (regional[stateName]) return regional[stateName];
+  const alias = STATE_NAME_ALIASES[stateName];
+  if (alias && regional[alias]) return regional[alias];
+  for (const [key, val] of Object.entries(STATE_NAME_ALIASES)) {
+    if (val === stateName && regional[key]) return regional[key];
+  }
+  return null;
 }
 
 function getScoreColor(score: number): string {
@@ -92,6 +145,55 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
   const hoveredStateRef = useRef<string | null>(null);
   const regionalLookup = useMemo(() => trend.regional, [trend.regional]);
 
+  // Right sidebar: search, pagination, and selection
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedState, setSelectedState] = useState<string | null>(null);
+
+  // Reset pagination and query on trend switch
+  useEffect(() => {
+    setSearchQuery("");
+    setCurrentPage(1);
+    setSelectedState(null);
+  }, [trend.id]);
+
+  // Comprehensive 36 States & UTs with scores derived from trend.regional
+  const allStatesList = useMemo(() => {
+    return ALL_INDIA_STATES_AND_UTS.map((stateName) => {
+      const data = getRegionalItem(trend.regional, stateName);
+      return {
+        name: stateName,
+        score: data?.score ?? 0,
+        mentions: data?.mentions ?? "No observations",
+        growth: data?.growth ?? "N/A",
+        sentiment: data?.sentiment ?? "neutral",
+      };
+    })
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.name.localeCompare(b.name);
+      })
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1,
+      }));
+  }, [trend.regional]);
+
+  const filteredStates = useMemo(() => {
+    if (!searchQuery.trim()) return allStatesList;
+    const q = searchQuery.toLowerCase().trim();
+    return allStatesList.filter((s) => s.name.toLowerCase().includes(q));
+  }, [allStatesList, searchQuery]);
+
+  const PAGE_SIZE = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredStates.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const paginatedStates = filteredStates.slice(startIndex, startIndex + PAGE_SIZE);
+
+  // Active highlighted state is null by default; only set when user manually selects a state
+  const activeStateName = selectedState;
+
   const positionTooltip = useCallback((x: number, y: number) => {
     pointerRef.current = { x, y };
     tooltipRef.current?.style.setProperty(
@@ -107,7 +209,7 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
   const handleMouseMove = useCallback(
     (geo: GeoFeature, e: React.MouseEvent<Element>) => {
       const stateName = getStateName(geo);
-      const data = regionalLookup[stateName];
+      const data = getRegionalItem(regionalLookup, stateName);
       positionTooltip(e.clientX, e.clientY);
       if (hoveredStateRef.current !== stateName) {
         hoveredStateRef.current = stateName;
@@ -183,21 +285,25 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
                 {({ geographies }: { geographies: GeoFeature[] }) =>
                   geographies.map((geo) => {
                     const stateName = getStateName(geo);
-                    const data = regionalLookup[stateName];
+                    const data = getRegionalItem(regionalLookup, stateName);
                     const score = data?.score ?? 0;
                     const fillColor = getScoreColor(score);
+                    const isSelected = activeStateName === stateName;
 
                     return (
                       <Geography
                         key={geo.rsmKey}
                         geography={geo}
+                        onClick={() =>
+                          setSelectedState((prev) => (prev === stateName ? null : stateName))
+                        }
                         onMouseMove={(e) => handleMouseMove(geo, e)}
                         onMouseLeave={handleMouseLeave}
                         style={{
                           default: {
                             fill: fillColor,
-                            stroke: "#FFFFFF",
-                            strokeWidth: 0.6,
+                            stroke: isSelected ? "#2563EB" : "#FFFFFF",
+                            strokeWidth: isSelected ? 1.5 : 0.6,
                             outline: "none",
                           },
                           hover: {
@@ -241,69 +347,156 @@ export default function IndiaHeatmap({ trend }: IndiaHeatmapProps) {
 
         {/* State rankings panel — spans 1 col */}
         <div className="lg:col-span-1 card flex flex-col justify-between h-full">
-          <div>
-            <h3 className="text-sm font-bold mb-1" style={{ color: "var(--navy)" }}>
-              Top States
-            </h3>
-            <p className="text-xs mb-3" style={{ color: "var(--slate)" }}>
-              Highest activity and regional momentum
-            </p>
-          </div>
-
-          <div className="space-y-2 overflow-y-auto pr-1 flex-1 my-1" style={{ maxHeight: "clamp(420px, 56vh, 520px)" }}>
-            {Object.entries(trend.regional)
-              .sort(([, a], [, b]) => b.score - a.score)
-              .slice(0, 10)
-              .map(([state, data], i) => (
-                <div
-                  key={state}
-                  className="flex items-center gap-2.5 p-2 rounded-lg border"
-                  style={{ borderColor: "#E2E8F0", background: "var(--bg)" }}
+          {/* Top content: Header, Table Columns & Rows */}
+          <div className="flex flex-col flex-1 min-h-0">
+            {/* Header: Title and Search Input */}
+            <div className="flex items-center justify-between gap-2 mb-3 px-1">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight" style={{ color: "#0F172A" }}>
+                States &amp; UTs
+              </h2>
+              <div className="relative w-48 sm:w-52">
+                <svg
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
                 >
-                  <span
-                    className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0"
-                    style={{
-                      background: i < 3 ? "var(--navy)" : "var(--secondary)",
-                      color: i < 3 ? "white" : "var(--slate)",
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  placeholder="Search state or UT..."
+                  className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50/50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Table Header: #, State / UT, Relevance Score */}
+            <div className="grid grid-cols-[28px_minmax(0,1fr)_130px_32px] sm:grid-cols-[30px_minmax(0,1fr)_150px_34px] items-center gap-2.5 px-3 py-1.5 text-[11px] font-semibold text-slate-400 mb-1">
+              <span className="text-center">#</span>
+              <span>State / UT</span>
+              <span className="col-span-2 text-right pr-0.5">Relevance Score</span>
+            </div>
+
+            {/* State List (10 rows evenly distributed) */}
+            <div className="flex flex-col justify-between flex-1 py-0.5">
+              {paginatedStates.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
+                  <p className="text-xs">No states or UTs found</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setCurrentPage(1);
                     }}
+                    className="text-xs text-blue-600 hover:underline mt-1.5 font-medium"
                   >
-                    {i + 1}
-                  </span>
-
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold truncate" style={{ color: "var(--navy)" }}>
-                      {state}
-                    </p>
-                    <p className="text-[11px]" style={{ color: "var(--slate)" }}>
-                      {data.mentions} mentions
-                    </p>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-black" style={{ color: "var(--navy)" }}>
-                      {data.score}
-                    </p>
-                    <p
-                      className="text-[11px] font-semibold"
-                      style={{ color: "var(--accent-green)" }}
-                    >
-                      {data.growth}
-                    </p>
-                  </div>
-
-                  {/* Sentiment dot */}
-                  <div
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ background: sentimentColor(data.sentiment) }}
-                    title={data.sentiment}
-                  />
+                    Clear search
+                  </button>
                 </div>
-              ))}
+              ) : (
+                paginatedStates.map((state) => {
+                  const isSelected = activeStateName === state.name;
+                  return (
+                    <div
+                      key={state.name}
+                      onClick={() =>
+                        setSelectedState((prev) => (prev === state.name ? null : state.name))
+                      }
+                      className={`grid grid-cols-[28px_minmax(0,1fr)_130px_32px] sm:grid-cols-[30px_minmax(0,1fr)_150px_34px] items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all duration-150 ${
+                        isSelected
+                          ? "bg-[#EFF6FF] shadow-xs"
+                          : "hover:bg-slate-50/80"
+                      }`}
+                    >
+                      {/* Rank */}
+                      <div className="flex items-center justify-center">
+                        {isSelected ? (
+                          <span className="w-6 h-6 rounded-full bg-[#2563EB] text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                            {state.rank}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold text-slate-700">
+                            {state.rank}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* State name */}
+                      <span
+                        className={`text-xs sm:text-[13px] truncate transition-colors ${
+                          isSelected
+                            ? "font-bold text-slate-900"
+                            : "font-semibold text-slate-800"
+                        }`}
+                      >
+                        {state.name}
+                      </span>
+
+                      {/* Horizontal progress bar */}
+                      <div className="h-2 w-full bg-[#E2E8F0] rounded-full overflow-hidden flex items-center">
+                        <div
+                          className="h-full bg-[#2563EB] rounded-full transition-all duration-300"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, state.score))}%`,
+                          }}
+                        />
+                      </div>
+
+                      {/* Score number */}
+                      <span
+                        className={`text-xs sm:text-[13px] text-right font-bold transition-colors ${
+                          isSelected ? "text-slate-900" : "text-slate-700"
+                        }`}
+                      >
+                        {state.score}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          <p className="text-xs pt-3 border-t text-gray-400" style={{ borderColor: "#EEF2F5" }}>
-            State-level relevance scores (0–100). District breakdown is future scope.
-          </p>
+          {/* Footer: Pagination (Clean without top border matching screenshot) */}
+          <div className="flex items-center justify-end gap-3 pt-3 mt-auto px-2">
+            <span className="text-xs text-slate-500 font-medium">
+              {filteredStates.length === 0
+                ? "0 of 0"
+                : `${startIndex + 1}–${Math.min(startIndex + PAGE_SIZE, filteredStates.length)} of ${filteredStates.length}`}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Previous page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Next page"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
