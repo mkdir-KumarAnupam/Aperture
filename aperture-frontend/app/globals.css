@@ -246,7 +246,11 @@ body.presentation-mode .interactive-card {
   border-radius: 1.5rem;
   background: #fff;
 }
-body.presentation-mode #kwList { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; max-width: 100%; padding: 2rem; }
+body.presentation-mode .keywords-section,
+body.presentation-mode article > section:not(.slide-panel) {
+  display: none !important;
+}
+
 body.presentation-mode .lang-donut-container { width: 141px !important; height: 141px !important; }
 
 /* Presentation Mode: Map Slide Adjustments */

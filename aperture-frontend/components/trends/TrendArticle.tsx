@@ -121,7 +121,7 @@ export function TrendArticle({
       </section>
 
       {/* 04 — keywords */}
-      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
+      <section className="reveal in pt-6 border-t border-gray-100/50 keywords-section">
         <div className="marker">4</div>
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-3">Breakout keywords</h2>
         <p className="text-sm text-gray-500 leading-relaxed mb-6">Terms whose share of the conversation jumped this window, ranked by the size of the jump.</p>
