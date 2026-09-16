@@ -37,7 +37,7 @@ function generateForecast(trendResult, history) {
     let nextLikelyPlatform = null;
     let estimatedSpreadMinutes = null;
     if (momentum.crossPlatformSpread && currentSnapshot.platformCount > 1) {
-        nextLikelyPlatform = trendResult.fastestPlatform === 'x' ? 'instagram' : 'reddit';
+        nextLikelyPlatform = trendResult.fastestPlatform === 'x' ? 'telegram' : 'reddit';
         estimatedSpreadMinutes = 45; // Heuristic
     }
 
