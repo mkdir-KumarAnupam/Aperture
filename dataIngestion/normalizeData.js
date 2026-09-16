@@ -48,7 +48,7 @@
  *   - modify the canonical event
  *   - redefine the canonical event
  *   - fabricate missing metrics
- *   - convert unavailable values into zero
+ *   - convert unavailable metrics into zero
  *   - reinterpret one metric as another metric
  *
  *
@@ -65,6 +65,9 @@
  * - Source language is preserved when available.
  * - Detected language is only a fallback.
  * - Views and impressions are NOT treated as reach.
+ * - Reddit score remains separate from interactions.
+ * - Author followers are exposed as authorReach ONLY when the canonical
+ *   platformData explicitly supplies authorFollowers.
  *
  * ============================================================================
  */
@@ -140,12 +143,6 @@
  * @returns {NormalizedEvent}
  */
 function normalizeData(event) {
-  /*
-   * A completely invalid argument is different from a valid event containing
-   * malformed individual fields.
-   *
-   * The latter should be handled safely by the platform normalizers.
-   */
   if (
     typeof event !== "object" ||
     event === null ||
@@ -183,25 +180,35 @@ function normalizeData(event) {
 /**
  * Detect the canonical platform.
  *
- * `twitter` is retained as an input compatibility alias, but all normalized
- * output uses the canonical platform identifier `x`.
+ * `twitter` remains an input compatibility alias.
+ *
+ * Normalized output always uses:
+ *
+ *   x
+ *   reddit
+ *   telegram
  *
  * @param {Object} event
  * @returns {"x"|"reddit"|"telegram"|null}
  */
 function detectPlatform(event) {
+  const platform =
+    typeof event.platform === "string"
+      ? event.platform.trim().toLowerCase()
+      : null;
+
   if (
-    event.platform === "x" ||
-    event.platform === "twitter"
+    platform === "x" ||
+    platform === "twitter"
   ) {
     return "x";
   }
 
-  if (event.platform === "reddit") {
+  if (platform === "reddit") {
     return "reddit";
   }
 
-  if (event.platform === "telegram") {
+  if (platform === "telegram") {
     return "telegram";
   }
 
@@ -214,20 +221,7 @@ function detectPlatform(event) {
 // ============================================================================
 
 /**
- * Normalize common event identity fields.
- *
- * We retain BOTH:
- *
- *   eventId
- *   platformPostId
- *
- * because they have different meanings.
- *
- * eventId:
- *   Collector-level identity.
- *
- * platformPostId:
- *   Native platform identity.
+ * Normalize common identity fields.
  *
  * @param {Object} event
  * @returns {Object}
@@ -286,9 +280,7 @@ function normalizeContent(content) {
     /*
      * Preserve source language first.
      *
-     * Detected language is only a fallback when source language is missing.
-     *
-     * This does NOT modify the canonical event.
+     * Detected language is only a fallback.
      */
     language:
       stringOrNull(
@@ -304,38 +296,75 @@ function normalizeContent(content) {
 /**
  * Normalize common author fields.
  *
+ * IMPORTANT:
+ *
+ * authorReach is NOT guessed.
+ *
+ * The value is supplied separately by each platform normalizer from an
+ * explicitly available canonical metric.
+ *
  * @param {Object} author
+ * @param {Object} platformData
  * @returns {Object}
  */
-function normalizeAuthor(author) {
+function normalizeAuthor(
+  author,
+  platformData
+) {
   const safeAuthor =
     objectOrEmpty(author);
+
+  const safePlatformData =
+    objectOrEmpty(
+      platformData
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * authorFollowers is a canonical platformData field.
+   *
+   * It is therefore safe to expose it as authorReach because it represents
+   * the author's audience size.
+   *
+   * We do NOT infer it from:
+   *
+   *   likes
+   *   views
+   *   reposts
+   *   engagement
+   *   message count
+   */
+  const authorReach =
+    firstNullableNumber(
+      safePlatformData.authorFollowers,
+
+      // Compatibility fields.
+      safeAuthor.followers,
+      safeAuthor.followersCount
+    );
 
   return {
     authorId:
       stringOrNull(
         safeAuthor.authorId
+      ) ??
+      stringOrNull(
+        safeAuthor.id
       ),
 
     authorHandle:
       stringOrNull(
         safeAuthor.authorHandle
+      ) ??
+      stringOrNull(
+        safeAuthor.handle
+      ) ??
+      stringOrNull(
+        safeAuthor.username
       ),
 
-    /*
-     * Author reach is intentionally NOT inferred.
-     *
-     * Do not use:
-     *
-     *   likes
-     *   views
-     *   reposts
-     *   channel subscribers
-     *   engagement
-     *
-     * as a substitute for author reach.
-     */
-    authorReach: null,
+    authorReach,
   };
 }
 
@@ -343,15 +372,18 @@ function normalizeAuthor(author) {
 /**
  * Normalize common relationships.
  *
- * Only the canonical reply relationship is represented as parentId.
+ * Only replyToId becomes parentId.
  *
- * Crossposts and forwards are NOT silently converted into parent-child
+ * Quote/repost/forward relationships remain semantically separate in the
+ * canonical event and are not silently converted into parent-child
  * relationships.
  *
  * @param {Object} relationships
  * @returns {Object}
  */
-function normalizeRelationships(relationships) {
+function normalizeRelationships(
+  relationships
+) {
   const safeRelationships =
     objectOrEmpty(
       relationships
@@ -406,7 +438,7 @@ function normalizeTime(time) {
 
 
 /**
- * Build the fields shared by all supported platforms.
+ * Build fields shared by all supported platforms.
  *
  * @param {Object} event
  * @param {"x"|"reddit"|"telegram"|null} platform
@@ -426,9 +458,15 @@ function baseNormalizedEvent(
       event.content
     );
 
+  const platformData =
+    objectOrEmpty(
+      event.platformData
+    );
+
   const author =
     normalizeAuthor(
-      event.author
+      event.author,
+      platformData
     );
 
   const relationships =
@@ -468,34 +506,23 @@ function baseNormalizedEvent(
 
 
 // ============================================================================
-// X / TWITTER
+// X
 // ============================================================================
 
 /**
  * Normalize an X event.
  *
- * IMPORTANT:
+ * X engagement comes from canonical:
  *
- * The verified X scraper currently does not attach event-level platformData.
+ *   event.engagement
  *
- * The verified X platformData belongs to authorProfiles:
+ * X author follower count is used only when the canonical event explicitly
+ * supplies:
  *
- *   pinnedTweetId
- *   url
- *   followingCount
- *   tweetCount
+ *   platformData.authorFollowers
  *
- * Those fields therefore do NOT belong in the X event normalizer.
- *
- *
- * X event analytics are derived from:
- *
- *   content
- *   author
- *   time
- *   engagement
- *   relationships
- *   source
+ * If the current X scraper does not provide that field, authorReach remains
+ * null.
  */
 function normalizeX(event) {
   const engagement =
@@ -539,22 +566,13 @@ function normalizeX(event) {
     );
 
   /*
-   * Sum only engagement metrics actually supplied by the source.
+   * Interactions are a DERIVED aggregate.
    *
-   * Example:
+   * Only metrics explicitly available in the canonical event are included.
    *
-   *   likes=10
-   *   replies=null
-   *   reposts=2
+   * Missing values remain missing in the canonical event.
    *
-   * becomes:
-   *
-   *   interactions=12
-   *
-   * Missing replies are NOT interpreted as zero in the source.
-   *
-   * The derived interaction total is still calculated from the available
-   * explicit engagement signals.
+   * The aggregate itself becomes null only when no interaction metric exists.
    */
   const interactions =
     sumAvailable([
@@ -580,15 +598,7 @@ function normalizeX(event) {
     );
 
   /*
-   * IMPORTANT:
-   *
-   * Views and impressions are not automatically equivalent to reach.
-   *
-   * Therefore:
-   *
-   *   reach = null
-   *
-   * unless the canonical source explicitly provides a reach metric.
+   * Views and impressions are NOT reach.
    */
   const reach = null;
 
@@ -614,11 +624,8 @@ function normalizeX(event) {
       ),
 
     /*
-     * X does not expose an explicit voting/approval metric in the canonical
-     * event structure.
-     *
-     * Likes/reposts/quotes/bookmarks are engagement signals, not explicit
-     * approval labels.
+     * X does not currently provide a canonical voting metric in this
+     * normalized structure.
      */
     score: null,
 
@@ -636,35 +643,15 @@ function normalizeX(event) {
 /**
  * Normalize a Reddit event.
  *
- * Verified Reddit POST platformData:
+ * Reddit score is preserved separately from interactions.
  *
- *   subreddit
- *   subredditId
- *   subredditNamePrefixed
- *   score
- *   upvoteRatio
- *   domain
- *   isSelf
- *   isVideo
- *   over18
- *   stickied
- *   locked
- *   spoiler
- *   distinguished
- *   permalink
- *   postHint
+ * This is important:
  *
+ *   score != likes
+ *   score != interactions
+ *   score != reach
  *
- * Verified Reddit COMMENT platformData:
- *
- *   subreddit
- *   subredditId
- *   score
- *   permalink
- *   depth
- *   stickied
- *   edited
- *   distinguished
+ * Reddit score is a platform voting score.
  */
 function normalizeReddit(event) {
   const content =
@@ -693,15 +680,9 @@ function normalizeReddit(event) {
   // --------------------------------------------------------------------------
 
   /*
-   * Verified scraper location:
+   * Verified canonical location:
    *
    *   platformData.score
-   *
-   * There is no confirmed canonical:
-   *
-   *   engagement.score
-   *
-   * Therefore use the verified platform-specific field.
    */
   const score =
     numOrNull(
@@ -712,28 +693,22 @@ function normalizeReddit(event) {
   // Replies
   // --------------------------------------------------------------------------
 
-  /*
-   * The canonical engagement structure provides replies.
-   *
-   * Do not assume:
-   *
-   *   numComments
-   *
-   * because that field is not part of the verified canonical structure.
-   */
   const replies =
     numOrNull(
       engagement.replies
     );
 
+  // --------------------------------------------------------------------------
+  // Interactions
+  // --------------------------------------------------------------------------
+
   /*
-   * IMPORTANT:
+   * Reddit score is NOT added here.
    *
-   * Reddit score is a voting score.
+   * It is preserved independently as `score`.
    *
-   * It is NOT an interaction count.
-   *
-   * Therefore it is preserved as `score` and is not added to interactions.
+   * Replies are the confirmed interaction metric currently available in
+   * canonical engagement.
    */
   const interactions =
     replies;
@@ -743,12 +718,9 @@ function normalizeReddit(event) {
   // --------------------------------------------------------------------------
 
   /*
-   * Reddit explicitly provides upvoteRatio for posts.
+   * upvoteRatio is a source-provided Reddit metric.
    *
-   * This is a defensible approval signal because it is a source-provided
-   * platform metric.
-   *
-   * We do not manufacture this value for comments/events where unavailable.
+   * It is therefore safe to expose as approvalScore.
    */
   const approvalScore =
     numOrNull(
@@ -760,12 +732,15 @@ function normalizeReddit(event) {
   // --------------------------------------------------------------------------
 
   /*
-   * No verified Reddit event-level reach metric exists in the current
-   * canonical structure.
+   * No verified Reddit event-level reach field exists here.
    *
-   * Therefore:
+   * Do NOT use:
    *
-   *   reach = null
+   *   score
+   *   views
+   *   subreddit members
+   *
+   * as reach.
    */
   const reach = null;
 
@@ -778,22 +753,18 @@ function normalizeReddit(event) {
       content.hashtags
     );
 
-  /*
-   * Prefer canonical hashtags.
-   *
-   * Text extraction is only a derived fallback.
-   */
+  const text =
+    [
+      content.title,
+      content.text,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
   const hashtags =
     canonicalHashtags.length > 0
       ? canonicalHashtags
-      : extractHashtags(
-        [
-          content.title,
-          content.text,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      );
+      : extractHashtags(text);
 
   // --------------------------------------------------------------------------
   // Output
@@ -823,9 +794,7 @@ function normalizeReddit(event) {
     approvalScore,
 
     /*
-     * Reddit score/upvote ratio is not a confidence probability.
-     *
-     * Therefore this remains null.
+     * upvoteRatio is approval, not confidence.
      */
     voteConfidence: null,
   };
@@ -838,29 +807,6 @@ function normalizeReddit(event) {
 
 /**
  * Normalize a Telegram event.
- *
- * Verified Telegram event platformData:
- *
- *   peerKind
- *   peerId
- *   channelId
- *   channelUsername
- *   channelTitle
- *   forwards
- *   reactionsTotal
- *   reactions
- *   forwardFromPeer
- *
- *
- * Verified canonical engagement:
- *
- *   likes
- *   replies
- *   reposts
- *   quotes
- *   bookmarks
- *   views
- *   impressions
  */
 function normalizeTelegram(event) {
   const engagement =
@@ -884,13 +830,11 @@ function normalizeTelegram(event) {
   // --------------------------------------------------------------------------
 
   /*
-   * The verified Telegram scraper stores aggregate reactions in:
+   * Verified Telegram platformData:
    *
-   *   platformData.reactionsTotal
+   *   reactionsTotal
    *
-   * It does not place them into engagement.likes.
-   *
-   * Therefore use reactionsTotal directly.
+   * This is an explicit aggregate reaction metric.
    */
   const reactionsTotal =
     numOrNull(
@@ -901,9 +845,6 @@ function normalizeTelegram(event) {
   // Replies
   // --------------------------------------------------------------------------
 
-  /*
-   * Telegram canonical engagement provides replies.
-   */
   const replies =
     numOrNull(
       engagement.replies
@@ -914,15 +855,10 @@ function normalizeTelegram(event) {
   // --------------------------------------------------------------------------
 
   /*
-   * Confirmed interaction signals:
+   * Reactions + replies.
    *
-   *   reactions
-   *   replies
-   *
-   * Forwards are deliberately excluded.
-   *
-   * A forward is a distribution signal rather than necessarily an
-   * interaction with the original message.
+   * Forwards are intentionally not counted as interactions because they are
+   * a distribution signal.
    */
   const interactions =
     sumAvailable([
@@ -934,17 +870,15 @@ function normalizeTelegram(event) {
   // Views
   // --------------------------------------------------------------------------
 
-  /*
-   * Telegram views are explicitly supplied through canonical engagement.
-   */
   const views =
     numOrNull(
       engagement.views
     );
 
-  /*
-   * Views are not automatically reach.
-   */
+  // --------------------------------------------------------------------------
+  // Reach
+  // --------------------------------------------------------------------------
+
   const reach = null;
 
   // --------------------------------------------------------------------------
@@ -970,10 +904,6 @@ function normalizeTelegram(event) {
 
     score: null,
 
-    /*
-     * Telegram's current canonical structure does not expose an explicit
-     * approval/voting metric.
-     */
     approvalScore: null,
 
     voteConfidence: null,
@@ -985,15 +915,6 @@ function normalizeTelegram(event) {
 // UNKNOWN PLATFORM
 // ============================================================================
 
-/**
- * Safe fallback for an unsupported platform.
- *
- * A single unknown platform does not necessarily need to destroy the entire
- * processing pipeline.
- *
- * The normalized platform is null because the platform is outside the
- * supported normalized identifiers.
- */
 function normalizeUnknown(event) {
   const result =
     baseNormalizedEvent(
@@ -1024,20 +945,15 @@ function normalizeUnknown(event) {
 
 
 // ============================================================================
-// SHARED METRIC HELPERS
+// METRIC HELPERS
 // ============================================================================
 
 /**
- * Calculate engagement rate safely.
+ * Calculate engagement rate only when actual reach is available.
  *
- * Engagement rate is only calculated when an actual reach metric exists.
+ * IMPORTANT:
  *
- * We deliberately do NOT use:
- *
- *   views
- *   impressions
- *
- * as reach.
+ * Views and impressions are deliberately NOT accepted as reach.
  *
  * @param {number|null} interactions
  * @param {number|null} reach
@@ -1050,6 +966,8 @@ function calculateEngagementRate(
   if (
     interactions === null ||
     reach === null ||
+    !Number.isFinite(interactions) ||
+    !Number.isFinite(reach) ||
     reach <= 0
   ) {
     return null;
@@ -1060,19 +978,13 @@ function calculateEngagementRate(
 
 
 /**
- * Sum only available finite numeric metrics.
+ * Sum available finite values.
  *
- * Examples:
+ * [1, 2, 3]      -> 6
+ * [1, null, 3]   -> 4
+ * [null, null]   -> null
  *
- *   [1, 2, 3]      → 6
- *   [1, null, 3]   → 4
- *   [null, null]   → null
- *
- * IMPORTANT:
- *
- * This is a DERIVED aggregate.
- *
- * It does not modify the source metrics.
+ * This is a derived aggregate and does not alter the canonical metrics.
  *
  * @param {Array<number|null>} values
  * @returns {number|null}
@@ -1089,7 +1001,9 @@ function sumAvailable(values) {
         Number.isFinite(value)
     );
 
-  if (available.length === 0) {
+  if (
+    available.length === 0
+  ) {
     return null;
   }
 
@@ -1102,13 +1016,9 @@ function sumAvailable(values) {
 
 
 /**
- * Convert a value into a finite number.
+ * Convert to finite number.
  *
- * Invalid/missing values become null.
- *
- * IMPORTANT:
- *
- * null does NOT become zero.
+ * Missing/invalid values become null.
  *
  * @param {*} value
  * @returns {number|null}
@@ -1132,9 +1042,7 @@ function numOrNull(value) {
 
 
 /**
- * Convert a value into a non-empty string.
- *
- * Empty strings become null.
+ * Convert to non-empty string.
  *
  * @param {*} value
  * @returns {string|null}
@@ -1142,12 +1050,7 @@ function numOrNull(value) {
 function stringOrNull(value) {
   if (
     value === null ||
-    value === undefined
-  ) {
-    return null;
-  }
-
-  if (
+    value === undefined ||
     typeof value !== "string"
   ) {
     return null;
@@ -1181,14 +1084,36 @@ function objectOrEmpty(value) {
 }
 
 
+/**
+ * Return the first valid numeric value.
+ *
+ * @param {...*} values
+ * @returns {number|null}
+ */
+function firstNullableNumber(
+  ...values
+) {
+  for (const value of values) {
+    const number =
+      numOrNull(value);
+
+    if (
+      number !== null
+    ) {
+      return number;
+    }
+  }
+
+  return null;
+}
+
+
 // ============================================================================
 // ARRAY NORMALIZATION
 // ============================================================================
 
 /**
- * Normalize a string array.
- *
- * Always returns an array.
+ * Normalize string arrays.
  *
  * @param {*} value
  * @returns {string[]}
@@ -1214,18 +1139,9 @@ function normalizeStringArray(value) {
 /**
  * Normalize canonical URLs.
  *
- * Canonical URLs may be strings or objects such as:
+ * Strings remain strings.
  *
- *   {
- *     raw,
- *     resolved,
- *     domain,
- *     resolutionStatus
- *   }
- *
- * URL objects MUST remain objects.
- *
- * We do NOT JSON.stringify() the array.
+ * URL objects remain objects.
  *
  * @param {*} value
  * @returns {Array<string|Object>}
@@ -1252,16 +1168,16 @@ function normalizeUrls(value) {
 // ============================================================================
 
 /**
- * Convert a timestamp into ISO 8601 UTC.
+ * Convert supported timestamp forms to ISO UTC.
  *
- * Supported:
+ * Supports:
  *
- *   - Date objects
- *   - ISO strings
+ *   - Date
+ *   - ISO string
  *   - epoch seconds
  *   - epoch milliseconds
- *   - numeric epoch strings
- *   - Redis Stream IDs
+ *   - numeric epoch string
+ *   - Redis Stream ID
  *
  * Invalid values become null.
  *
@@ -1280,7 +1196,7 @@ function toIsoOrNull(value) {
   let date = null;
 
   // --------------------------------------------------------------------------
-  // Date object
+  // Date
   // --------------------------------------------------------------------------
 
   if (value instanceof Date) {
@@ -1296,9 +1212,7 @@ function toIsoOrNull(value) {
     Number.isFinite(value)
   ) {
     date =
-      epochToDate(
-        value
-      );
+      epochToDate(value);
   }
 
   // --------------------------------------------------------------------------
@@ -1414,7 +1328,7 @@ function toIsoOrNull(value) {
 
 
 /**
- * Convert an epoch number into a Date.
+ * Convert epoch value into Date.
  *
  * Values below 1e11 are treated as seconds.
  * Larger values are treated as milliseconds.
@@ -1435,22 +1349,15 @@ function epochToDate(value) {
 
 
 // ============================================================================
-// VELOCITY / TIME WINDOW
+// TIME / VELOCITY
 // ============================================================================
 
 /**
- * Calculate elapsed hours between:
+ * Calculate elapsed hours:
  *
  *   publishedAt → observedAt
  *
- * Returns null when:
- *
- *   - either timestamp is unavailable
- *   - either timestamp is invalid
- *   - observedAt occurs before publishedAt
- *
- * A negative interval is treated as invalid rather than being interpreted as
- * a negative velocity window.
+ * Returns null when unavailable or invalid.
  *
  * @param {string|null} publishedAt
  * @param {string|null} observedAt
@@ -1487,27 +1394,25 @@ function hoursBetween(
   const milliseconds =
     observed - published;
 
-  if (milliseconds < 0) {
+  if (
+    milliseconds < 0
+  ) {
     return null;
   }
 
   return (
-    milliseconds / 3_600_000
+    milliseconds /
+    3_600_000
   );
 }
 
 
 // ============================================================================
-// HASHTAG EXTRACTION
+// HASHTAGS
 // ============================================================================
 
 /**
- * Extract hashtags from text only when the canonical event did not already
- * provide them.
- *
- * This is a DERIVED convenience operation.
- *
- * The canonical event itself remains untouched.
+ * Extract hashtags from text only when canonical hashtags are unavailable.
  *
  * @param {string} text
  * @returns {string[]}
@@ -1541,15 +1446,9 @@ function extractHashtags(text) {
 
 
 // ============================================================================
-// SAFE DEBUG SERIALIZATION
+// SAFE SERIALIZATION
 // ============================================================================
 
-/**
- * Safe JSON serialization for validation errors.
- *
- * @param {*} value
- * @returns {string}
- */
 function safeStringify(value) {
   try {
     return JSON.stringify(

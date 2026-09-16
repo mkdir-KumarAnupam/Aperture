@@ -8,15 +8,25 @@
  *   - no database calls
  *   - no mutation of canonical data
  *
- * Supports the canonical Aperture schema v1.0.0:
+ * Expected normalized post shape:
  *
  * {
- *   schemaVersion: "1.0.0",
- *   run_id: "...",
- *   trend: {
- *     label: "..."
- *   },
- *   events: [...]
+ *   postId,
+ *   eventId,
+ *   platform,
+ *   text,
+ *   authorHandle,
+ *   authorId,
+ *   publishedAt,
+ *   observedAt,
+ *   interactions,
+ *   reach,
+ *   authorFollowers,
+ *   engagementRate,
+ *   approvalScore,
+ *   voteConfidence,
+ *   velocityWindow,
+ *   hashtags
  * }
  *
  * Also supports legacy/adapter input shapes.
@@ -62,6 +72,17 @@ const VIRALITY_WEIGHTS = {
 
 const MIN_POSTS_FOR_TREND = 2;
 const TOP_INFLUENCER_COUNT = 5;
+
+// Velocity calibration.
+// Log scaling prevents a few huge posts from dominating the score.
+const VELOCITY_REFERENCE = 10;
+
+// Acceleration calibration.
+// This is deliberately symmetric around zero.
+const ACCELERATION_REFERENCE = 10;
+
+// Engagement rate at which this component reaches 1.
+const ENGAGEMENT_REFERENCE = 0.10;
 
 // ============================================================================
 // Main Entry Point
@@ -201,22 +222,27 @@ function analyzeTrend(jobData) {
       posts.length
     );
 
+  // IMPORTANT:
+  // Reach is NOT follower count.
+  //
+  // Only use actual post reach when explicitly supplied.
   const rawReach =
     posts.reduce(
       (sum, post) =>
         sum +
         safeNumber(
-          post.reach ??
-          post.authorReach,
+          post.reach,
           0
         ),
       0
     );
 
   const approximateReach =
-    humanizeNumber(
-      rawReach
-    );
+    rawReach > 0
+      ? humanizeNumber(
+        rawReach
+      )
+      : "Unknown";
 
   const growthPercent =
     computeGrowthPercent(
@@ -291,6 +317,7 @@ function analyzeTrend(jobData) {
         postId:
           post.postId ??
           post.id ??
+          post.eventId ??
           null,
 
         platform:
@@ -353,7 +380,8 @@ function analyzeTrend(jobData) {
 
     id,
 
-    name: trendLabel,
+    name:
+      trendLabel,
 
     trendScore,
 
@@ -375,6 +403,9 @@ function analyzeTrend(jobData) {
 
     influence,
 
+    posts:
+      outputPosts,
+
     _windows:
       windowResults,
 
@@ -387,21 +418,6 @@ function analyzeTrend(jobData) {
 // INPUT NORMALIZATION
 // ============================================================================
 
-/**
- * Normalizes all supported input shapes.
- *
- * Most important canonical case:
- *
- * {
- *   trend: {
- *     label: "#GodMorningTuesday"
- *   },
- *   events: [...]
- * }
- *
- * Previously `jobData.trend` was passed to firstNonEmptyString(),
- * but in the canonical schema `trend` is an object.
- */
 function normalizeTrendInput(
   jobData
 ) {
@@ -414,10 +430,6 @@ function normalizeTrendInput(
       "Trend analysis requires an object payload."
     );
   }
-
-  // --------------------------------------------------------------------------
-  // Candidate containers
-  // --------------------------------------------------------------------------
 
   const canonical =
     isObject(
@@ -460,12 +472,9 @@ function normalizeTrendInput(
 
   const rawLabel =
     firstNonEmptyString(
-      // Top-level legacy forms
       jobData.trend_label,
       jobData.trendLabel,
 
-      // Canonical form:
-      // trend: { label: "..." }
       trendObject?.label,
       trendObject?.name,
       trendObject?.trendLabel,
@@ -474,7 +483,6 @@ function normalizeTrendInput(
       jobData.name,
       jobData.label,
 
-      // Collection forms
       collection?.trend_label,
       collection?.trendLabel,
       collectionTrend?.label,
@@ -484,7 +492,6 @@ function normalizeTrendInput(
       collection?.name,
       collection?.label,
 
-      // Canonical nested forms
       canonical?.trend_label,
       canonical?.trendLabel,
       canonicalTrend?.label,
@@ -516,15 +523,12 @@ function normalizeTrendInput(
 
   let rawPosts =
     firstArray(
-      // Direct canonical/legacy forms
       jobData.events,
       jobData.posts,
 
-      // Canonical nested forms
       canonical?.events,
       canonical?.posts,
 
-      // Collection forms
       collection?.events,
       collection?.posts
     );
@@ -616,34 +620,40 @@ function firstArray(
 // ============================================================================
 
 /**
- * Normalizes both legacy posts and canonical v1.0.0 events.
+ * Converts canonical and legacy event shapes into the internal
+ * representation expected by trend analysis.
  *
- * Canonical event:
+ * Canonical Aperture event:
  *
  * {
  *   eventId,
  *   platform,
  *   content: {
- *     text
+ *     text,
+ *     hashtags
  *   },
  *   author: {
- *     id,
- *     username,
- *     profile: {}
+ *     authorId,
+ *     authorHandle,
+ *     ...
  *   },
  *   time: {
- *     publishedAt
+ *     publishedAt,
+ *     observedAt
  *   },
- *   metrics: {
+ *   engagement: {
  *     likes,
- *     comments,
- *     shares,
- *     views
+ *     replies,
+ *     reposts,
+ *     quotes,
+ *     bookmarks,
+ *     views,
+ *     impressions
  *   },
- *   entities: {
- *     hashtags,
- *     mentions,
- *     urls
+ *   platformData: {
+ *     authorFollowers,
+ *     score,
+ *     ...
  *   }
  * }
  */
@@ -655,6 +665,13 @@ function normalizePost(
       post.metrics
     )
       ? post.metrics
+      : {};
+
+  const engagement =
+    isObject(
+      post.engagement
+    )
+      ? post.engagement
       : {};
 
   const author =
@@ -678,6 +695,13 @@ function normalizePost(
       ? post.time
       : {};
 
+  const platformData =
+    isObject(
+      post.platformData
+    )
+      ? post.platformData
+      : {};
+
   const entities =
     isObject(
       post.entities
@@ -686,71 +710,185 @@ function normalizePost(
       : {};
 
   // --------------------------------------------------------------------------
+  // Platform
+  // --------------------------------------------------------------------------
+
+  const platform =
+    normalizePlatform(
+      post.platform ??
+      post.source ??
+      post.network
+    );
+
+  // --------------------------------------------------------------------------
   // Interactions
   // --------------------------------------------------------------------------
   //
-  // Canonical metrics do not necessarily contain a precomputed
-  // `interactions` field.
+  // PRIMARY SOURCE:
+  //   normalizeData.js already computes `interactions`.
   //
-  // Therefore calculate it from:
+  // Canonical fallback:
   //
-  // likes + comments + shares
+  //   X:
+  //     likes + replies + reposts + quotes + bookmarks
   //
-  // when necessary.
+  //   Reddit:
+  //     replies
+  //
+  //   Telegram:
+  //     reactionsTotal + replies
+  //
+  // Do NOT use Reddit `score` as likes.
   //
 
-  const explicitInteractions =
+  let interactions =
     firstFiniteNumber(
       post.interactions,
-      post.engagement,
       metrics.interactions,
       metrics.engagement
     );
 
-  const calculatedInteractions =
-    safeNumber(
-      metrics.likes,
-      0
-    ) +
-    safeNumber(
-      metrics.comments,
-      0
-    ) +
-    safeNumber(
-      metrics.shares,
-      0
-    );
+  if (
+    interactions === null
+  ) {
+    if (
+      platform === "reddit"
+    ) {
+      interactions =
+        sumAvailable(
+          engagement.replies,
+          metrics.comments
+        );
+    } else if (
+      platform === "telegram"
+    ) {
+      interactions =
+        sumAvailable(
+          platformData.reactionsTotal,
+          engagement.replies,
+          metrics.comments
+        );
+    } else {
+      interactions =
+        sumAvailable(
+          engagement.likes,
+          engagement.replies,
+          engagement.reposts,
+          engagement.quotes,
+          engagement.bookmarks,
 
-  const interactions =
-    explicitInteractions !==
-      null
-      ? explicitInteractions
-      : calculatedInteractions;
+          metrics.likes,
+          metrics.comments,
+          metrics.shares
+        );
+    }
+  }
+
+  // If absolutely no interaction metric exists,
+  // preserve the missing state as null.
+  //
+  // The computation layer will treat it as zero.
+  if (
+    interactions === null
+  ) {
+    interactions = null;
+  }
 
   // --------------------------------------------------------------------------
   // Reach
   // --------------------------------------------------------------------------
+  //
+  // IMPORTANT:
+  //
+  // Views are NOT automatically reach.
+  // Followers are NOT reach.
+  //
+  // Only use explicit reach.
+  //
 
   const reach =
     firstNullableNumber(
       post.reach,
-      metrics.reach,
-      metrics.views
+      metrics.reach
     );
 
   // --------------------------------------------------------------------------
-  // Author reach
+  // Author followers
   // --------------------------------------------------------------------------
+  //
+  // This is audience size, NOT post reach.
+  //
 
-  const authorReach =
+  const authorFollowers =
     firstNullableNumber(
-      post.authorReach,
-      author.reach,
+      post.authorFollowers,
+
+      platformData.authorFollowers,
+
       author.followers,
       author.followersCount,
-      author.profile?.reach,
+
       author.profile?.followers,
       author.profile?.followersCount
+    );
+
+  // --------------------------------------------------------------------------
+  // Engagement rate
+  // --------------------------------------------------------------------------
+  //
+  // Never fabricate engagement rate when actual reach is unavailable.
+  //
+
+  let engagementRate =
+    firstNullableNumber(
+      post.engagementRate,
+      metrics.engagementRate
+    );
+
+  if (
+    engagementRate === null &&
+    reach !== null &&
+    reach > 0 &&
+    interactions !== null
+  ) {
+    engagementRate =
+      interactions /
+      reach;
+  }
+
+  // --------------------------------------------------------------------------
+  // Approval score
+  // --------------------------------------------------------------------------
+
+  const approvalScore =
+    firstNullableNumber(
+      post.approvalScore,
+
+      platform === "reddit"
+        ? platformData.upvoteRatio
+        : null,
+
+      metrics.approvalScore
+    );
+
+  // --------------------------------------------------------------------------
+  // Vote confidence
+  // --------------------------------------------------------------------------
+
+  const voteConfidence =
+    firstNullableNumber(
+      post.voteConfidence,
+      metrics.voteConfidence
+    );
+
+  // --------------------------------------------------------------------------
+  // Velocity window
+  // --------------------------------------------------------------------------
+
+  const velocityWindow =
+    firstNullableNumber(
+      post.velocityWindow,
+      metrics.velocityWindow
     );
 
   // --------------------------------------------------------------------------
@@ -760,6 +898,7 @@ function normalizePost(
   const hashtags =
     firstArray(
       post.hashtags,
+      content.hashtags,
       entities.hashtags
     ) ?? [];
 
@@ -777,12 +916,7 @@ function normalizePost(
       post.id ??
       null,
 
-    platform:
-      normalizePlatform(
-        post.platform ??
-        post.source ??
-        post.network
-      ),
+    platform,
 
     text:
       post.text ??
@@ -794,8 +928,14 @@ function normalizePost(
           : null
       ),
 
+    title:
+      post.title ??
+      content.title ??
+      null,
+
     authorHandle:
       post.authorHandle ??
+      author.authorHandle ??
       author.handle ??
       author.username ??
       post.user?.handle ??
@@ -805,8 +945,11 @@ function normalizePost(
 
     authorId:
       post.authorId ??
+      author.authorId ??
       author.id ??
       null,
+
+    authorFollowers,
 
     publishedAt:
       post.publishedAt ??
@@ -826,28 +969,13 @@ function normalizePost(
 
     reach,
 
-    authorReach,
+    engagementRate,
 
-    engagementRate:
-      firstNullableNumber(
-        post.engagementRate,
-        metrics.engagementRate
-      ),
+    approvalScore,
 
-    approvalScore:
-      safeNullableNumber(
-        post.approvalScore
-      ),
+    voteConfidence,
 
-    voteConfidence:
-      safeNullableNumber(
-        post.voteConfidence
-      ),
-
-    velocityWindow:
-      safeNullableNumber(
-        post.velocityWindow
-      ),
+    velocityWindow,
 
     hashtags,
   };
@@ -1240,10 +1368,52 @@ function computeFastestPlatform(
         post.platform
       );
 
-    const velocityWindow =
+    const interactions =
+      safeNullableNumber(
+        post.interactions
+      );
+
+    if (
+      interactions === null
+    ) {
+      continue;
+    }
+
+    let velocityWindow =
       safeNullableNumber(
         post.velocityWindow
       );
+
+    // If normalizeData did not provide a velocity window,
+    // derive it from publication/observation timestamps.
+    if (
+      velocityWindow ===
+      null ||
+      velocityWindow <= 0
+    ) {
+      const published =
+        getTimestampMs(
+          post.publishedAt
+        );
+
+      const observed =
+        getTimestampMs(
+          post.observedAt
+        );
+
+      if (
+        published !== null &&
+        observed !== null &&
+        observed > published
+      ) {
+        velocityWindow =
+          (
+            observed -
+            published
+          ) /
+          3_600_000;
+      }
+    }
 
     if (
       velocityWindow ===
@@ -1265,12 +1435,6 @@ function computeFastestPlatform(
         count: 0,
       };
     }
-
-    const interactions =
-      safeNumber(
-        post.interactions,
-        0
-      );
 
     platformVelocities[
       platform
@@ -1548,11 +1712,12 @@ function analyzeWindow(
   let influenceSum =
     0;
 
-  const perPostVelocities =
+  const timeSeries =
     [];
 
-  const timeStamps =
-    [];
+  // --------------------------------------------------------------------------
+  // Aggregate post metrics
+  // --------------------------------------------------------------------------
 
   for (
     const post of
@@ -1613,36 +1778,19 @@ function analyzeWindow(
       engagementCount++;
     }
 
-    const velocityWindow =
-      safeNullableNumber(
-        post.velocityWindow
-      );
-
-    if (
-      velocityWindow !==
-      null &&
-      velocityWindow > 0
-    ) {
-      perPostVelocities.push(
-        (
-          interactions *
-          combinedWeight
-        ) /
-        velocityWindow
-      );
-    }
-
     if (
       post._epochMs !==
       null
     ) {
-      timeStamps.push({
+      timeSeries.push({
         epochMs:
           post._epochMs,
 
         weightedInteractions:
           interactions *
           combinedWeight,
+
+        interactions,
       });
     }
   }
@@ -1665,7 +1813,11 @@ function analyzeWindow(
       )
       : 1;
 
-  const meanVelocity =
+  // --------------------------------------------------------------------------
+  // Average weighted interactions per post
+  // --------------------------------------------------------------------------
+
+  const weightedInteractionsPerPost =
     totalDecayWeight > 0
       ? weightedInteractionSum /
       totalDecayWeight
@@ -1684,29 +1836,30 @@ function analyzeWindow(
   let acceleration =
     0;
 
+  let velocityPerHour =
+    0;
+
   if (
-    timeStamps.length >= 2
+    timeSeries.length >= 2
   ) {
-    timeStamps.sort(
+    timeSeries.sort(
       (a, b) =>
         a.epochMs -
         b.epochMs
     );
 
     const t0 =
-      timeStamps[0].epochMs;
+      timeSeries[0].epochMs;
 
     const buckets = {};
 
     for (
-      const {
-        epochMs,
-        weightedInteractions,
-      } of timeStamps
+      const point of
+      timeSeries
     ) {
       const hourOffset =
         (
-          epochMs -
+          point.epochMs -
           t0
         ) /
         3_600_000;
@@ -1717,63 +1870,35 @@ function analyzeWindow(
           bucketSize
         );
 
+      if (
+        !buckets[bucketKey]
+      ) {
+        buckets[bucketKey] = {
+          interactions: 0,
+          epochMs:
+            t0 +
+            bucketKey *
+            3_600_000 *
+            bucketSize,
+        };
+      }
+
       buckets[
         bucketKey
-      ] =
-        (
-          buckets[
-          bucketKey
-          ] || 0
-        ) +
-        weightedInteractions;
+      ].interactions +=
+        point.weightedInteractions;
     }
 
     const bucketEntries =
       Object.entries(
         buckets
-      ).map(
-        ([key, value]) => [
-          Number(key),
-          value,
-        ]
-      );
-
-    const sortedByValue =
-      [...bucketEntries]
-        .sort(
-          (a, b) =>
-            b[1] -
-            a[1]
-        );
-
-    const [
-      peakKey,
-      peakValue,
-    ] =
-      sortedByValue[0];
-
-    peakBucketHour =
-      peakKey *
-      bucketSize;
-
-    const totalWeighted =
-      bucketEntries.reduce(
-        (sum, [, value]) =>
-          sum + value,
-        0
-      );
-
-    burstScore =
-      totalWeighted > 0
-        ? round(
-          peakValue /
-          totalWeighted,
-          4
+      )
+        .map(
+          ([key, value]) => [
+            Number(key),
+            value,
+          ]
         )
-        : 0;
-
-    const sortedByTime =
-      [...bucketEntries]
         .sort(
           (a, b) =>
             a[0] -
@@ -1781,13 +1906,116 @@ function analyzeWindow(
         );
 
     if (
-      sortedByTime.length >=
-      2
+      bucketEntries.length > 0
     ) {
+      const [
+        peakKey,
+        peakBucket,
+      ] =
+        [...bucketEntries]
+          .sort(
+            (a, b) =>
+              b[1].interactions -
+              a[1].interactions
+          )[0];
+
+      peakBucketHour =
+        peakKey *
+        bucketSize;
+
+      const totalWeighted =
+        bucketEntries.reduce(
+          (sum, [, bucket]) =>
+            sum +
+            bucket.interactions,
+          0
+        );
+
+      burstScore =
+        totalWeighted > 0
+          ? round(
+            peakBucket.interactions /
+            totalWeighted,
+            4
+          )
+          : 0;
+
+      // ----------------------------------------------------------------------
+      // Velocity
+      // ----------------------------------------------------------------------
+      //
+      // Instead of comparing:
+      //
+      //   interactions/post
+      //
+      // against:
+      //
+      //   interactions/hour
+      //
+      // we calculate a consistent rate:
+      //
+      //   interactions per hour
+      //
+      // across the observed time span.
+      //
+
+      const firstTime =
+        bucketEntries[0][1]
+          .epochMs;
+
+      const lastTime =
+        bucketEntries[
+          bucketEntries.length - 1
+        ][1].epochMs;
+
+      const elapsedHours =
+        Math.max(
+          (
+            lastTime -
+            firstTime
+          ) /
+          3_600_000,
+          bucketSize
+        );
+
+      const totalBucketInteractions =
+        bucketEntries.reduce(
+          (sum, [, bucket]) =>
+            sum +
+            bucket.interactions,
+          0
+        );
+
+      velocityPerHour =
+        totalBucketInteractions /
+        elapsedHours;
+
+      // ----------------------------------------------------------------------
+      // Acceleration
+      // ----------------------------------------------------------------------
+      //
+      // Regression slope of interactions per bucket.
+      //
+      // Positive = activity increasing.
+      // Negative = activity decreasing.
+      //
+
+      const regressionPoints =
+        bucketEntries.map(
+          ([
+            key,
+            bucket,
+          ]) => [
+              key *
+              bucketSize,
+              bucket.interactions,
+            ]
+        );
+
       acceleration =
         round(
           linearRegressionSlope(
-            sortedByTime
+            regressionPoints
           ),
           4
         );
@@ -1795,97 +2023,111 @@ function analyzeWindow(
   }
 
   // --------------------------------------------------------------------------
-  // Velocity normalization
+  // Velocity fallback
   // --------------------------------------------------------------------------
-
-  let velocity = 0;
+  //
+  // For cases where timestamps are insufficient to build multiple buckets,
+  // use a normalized per-hour rate based on the observed span.
+  //
 
   if (
-    perPostVelocities.length >=
-    2
+    velocityPerHour === 0 &&
+    timeSeries.length >= 2
   ) {
-    const mean =
-      perPostVelocities.reduce(
-        (a, b) =>
-          a + b,
-        0
-      ) /
-      perPostVelocities.length;
+    const first =
+      timeSeries[0]._epochMs ??
+      timeSeries[0].epochMs;
 
-    const variance =
-      perPostVelocities.reduce(
-        (sum, value) =>
-          sum +
-          (
-            value -
-            mean
-          ) ** 2,
-        0
-      ) /
-      perPostVelocities.length;
+    const last =
+      timeSeries[
+        timeSeries.length - 1
+      ]._epochMs ??
+      timeSeries[
+        timeSeries.length - 1
+      ].epochMs;
 
-    const stdDev =
-      Math.sqrt(
-        variance
+    const elapsedHours =
+      Math.max(
+        (
+          last -
+          first
+        ) /
+        3_600_000,
+        1
       );
 
-    velocity =
-      stdDev > 0
-        ? round(
-          (
-            meanVelocity -
-            mean
-          ) /
-          stdDev,
-          4
-        )
-        : round(
-          meanVelocity,
-          4
-        );
-  } else {
-    velocity =
-      round(
-        meanVelocity,
-        4
+    velocityPerHour =
+      weightedInteractionSum /
+      Math.max(
+        elapsedHours,
+        1
       );
   }
 
   // --------------------------------------------------------------------------
-  // Composite virality score
+  // Velocity normalization
   // --------------------------------------------------------------------------
 
   const velocityNorm =
-    clamp01(
-      velocity / 4
+    normalizeVelocity(
+      velocityPerHour
     );
 
+  // --------------------------------------------------------------------------
+  // Acceleration normalization
+  // --------------------------------------------------------------------------
+  //
+  // IMPORTANT FIX:
+  //
+  // Old code:
+  //
+  //   (acceleration + 50) / 100
+  //
+  // made acceleration=0 become 0.5.
+  //
+  // That meant every trend automatically received:
+  //
+  //   0.15 * 0.5 = 0.075
+  //
+  // which became 7.5 points -> rounded to 8.
+  //
+  // New normalization:
+  //
+  //   zero acceleration = 0
+  //   positive acceleration increases score
+  //   negative acceleration contributes 0
+  //
+
   const accelerationNorm =
-    clamp01(
-      (
-        acceleration +
-        50
-      ) /
-      100
+    normalizeAcceleration(
+      acceleration
     );
+
+  // --------------------------------------------------------------------------
+  // Engagement normalization
+  // --------------------------------------------------------------------------
 
   const engagementNorm =
     avgEngagementRate !==
       null
       ? clamp01(
         avgEngagementRate /
-        0.10
+        ENGAGEMENT_REFERENCE
       )
       : 0;
 
+  // --------------------------------------------------------------------------
+  // Influence normalization
+  // --------------------------------------------------------------------------
+
   const influenceNorm =
-    clamp01(
-      (
-        avgInfluence -
-        1
-      ) /
-      3
+    normalizeInfluence(
+      avgInfluence
     );
+
+  // --------------------------------------------------------------------------
+  // Composite virality score
+  // --------------------------------------------------------------------------
 
   const viralityScore =
     round(
@@ -1958,15 +2200,24 @@ function analyzeWindow(
               0
             ),
 
+          // Actual reach only.
+          // Do not expose followers as reach.
           reach:
-            post.authorReach ??
             post.reach ??
+            null,
+
+          authorFollowers:
+            post.authorFollowers ??
             null,
         })
       );
 
   return {
-    velocity,
+    velocity:
+      round(
+        velocityPerHour,
+        4
+      ),
 
     acceleration,
 
@@ -1977,6 +2228,12 @@ function analyzeWindow(
 
     postCount:
       windowPosts.length,
+
+    avgInteractionsPerPost:
+      round(
+        weightedInteractionsPerPost,
+        4
+      ),
 
     avgEngagementRate,
 
@@ -1989,6 +2246,82 @@ function analyzeWindow(
     avgInfluence,
 
     topInfluencers,
+
+    // ------------------------------------------------------------------------
+    // Diagnostics
+    // ------------------------------------------------------------------------
+
+    scoreComponents: {
+      velocityNorm:
+        round(
+          velocityNorm,
+          4
+        ),
+
+      burstScore:
+        round(
+          burstScore,
+          4
+        ),
+
+      accelerationNorm:
+        round(
+          accelerationNorm,
+          4
+        ),
+
+      engagementNorm:
+        round(
+          engagementNorm,
+          4
+        ),
+
+      influenceNorm:
+        round(
+          influenceNorm,
+          4
+        ),
+
+      weightedVelocityContribution:
+        round(
+          VIRALITY_WEIGHTS
+            .velocityNorm *
+          velocityNorm,
+          4
+        ),
+
+      weightedBurstContribution:
+        round(
+          VIRALITY_WEIGHTS
+            .burstScore *
+          burstScore,
+          4
+        ),
+
+      weightedAccelerationContribution:
+        round(
+          VIRALITY_WEIGHTS
+            .accelerationNorm *
+          accelerationNorm,
+          4
+        ),
+
+      weightedEngagementContribution:
+        round(
+          VIRALITY_WEIGHTS
+            .engagementNorm *
+          engagementNorm,
+          4
+        ),
+
+      weightedInfluenceContribution:
+        round(
+          VIRALITY_WEIGHTS
+            .influenceNorm *
+          influenceNorm,
+          4
+        ),
+    },
   };
 }
 
@@ -1999,17 +2332,17 @@ function analyzeWindow(
 function computeInfluenceMultiplier(
   post
 ) {
-  const reach =
+  const followers =
     safeNullableNumber(
-      post.authorReach
+      post.authorFollowers
     );
 
   const base =
-    reach !== null &&
-      reach > 0
+    followers !== null &&
+      followers > 0
       ? 1 +
       Math.log10(
-        1 + reach
+        1 + followers
       )
       : 1;
 
@@ -2030,6 +2363,97 @@ function computeInfluenceMultiplier(
   return (
     base *
     confidenceBoost
+  );
+}
+
+// ============================================================================
+// VELOCITY NORMALIZATION
+// ============================================================================
+
+function normalizeVelocity(
+  velocityPerHour
+) {
+  const velocity =
+    safeNumber(
+      velocityPerHour,
+      0
+    );
+
+  if (
+    velocity <= 0
+  ) {
+    return 0;
+  }
+
+  // Log saturation:
+  //
+  // velocity=0      -> 0
+  // velocity=10     -> ~0.26
+  // velocity=100    -> ~0.50
+  // velocity=1000   -> ~0.75
+  //
+  // This prevents very large viral posts from completely dominating.
+  return clamp01(
+    Math.log10(
+      1 + velocity
+    ) /
+    Math.log10(
+      1 +
+      VELOCITY_REFERENCE
+    )
+  );
+}
+
+// ============================================================================
+// ACCELERATION NORMALIZATION
+// ============================================================================
+
+function normalizeAcceleration(
+  acceleration
+) {
+  const value =
+    safeNumber(
+      acceleration,
+      0
+    );
+
+  if (
+    value <= 0
+  ) {
+    return 0;
+  }
+
+  return clamp01(
+    value /
+    ACCELERATION_REFERENCE
+  );
+}
+
+// ============================================================================
+// INFLUENCE NORMALIZATION
+// ============================================================================
+
+function normalizeInfluence(
+  influence
+) {
+  const value =
+    safeNumber(
+      influence,
+      1
+    );
+
+  if (
+    value <= 1
+  ) {
+    return 0;
+  }
+
+  return clamp01(
+    (
+      value -
+      1
+    ) /
+    3
   );
 }
 
@@ -2258,6 +2682,14 @@ function safeNumber(
   value,
   fallback = 0
 ) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return fallback;
+  }
+
   const number =
     Number(value);
 
@@ -2341,6 +2773,34 @@ function firstFiniteNumber(
   return null;
 }
 
+function sumAvailable(
+  ...values
+) {
+  let sum = 0;
+  let found = false;
+
+  for (
+    const value of
+    values
+  ) {
+    const number =
+      safeNullableNumber(
+        value
+      );
+
+    if (
+      number !== null
+    ) {
+      sum += number;
+      found = true;
+    }
+  }
+
+  return found
+    ? sum
+    : null;
+}
+
 function normalizePlatform(
   platform
 ) {
@@ -2356,10 +2816,37 @@ function normalizePlatform(
       .trim()
       .toLowerCase();
 
+  if (
+    normalized ===
+    "twitter"
+  ) {
+    return "x";
+  }
+
   return (
     normalized ||
     "unknown"
   );
+}
+
+function getTimestampMs(
+  value
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return null;
+  }
+
+  const timestamp =
+    new Date(value).getTime();
+
+  return Number.isFinite(
+    timestamp
+  )
+    ? timestamp
+    : null;
 }
 
 function round(
@@ -2471,6 +2958,9 @@ function emptyWindowResult(
 
     postCount,
 
+    avgInteractionsPerPost:
+      0,
+
     avgEngagementRate:
       null,
 
@@ -2488,6 +2978,19 @@ function emptyWindowResult(
 
     topInfluencers:
       [],
+
+    scoreComponents: {
+      velocityNorm: 0,
+      burstScore: 0,
+      accelerationNorm: 0,
+      engagementNorm: 0,
+      influenceNorm: 0,
+      weightedVelocityContribution: 0,
+      weightedBurstContribution: 0,
+      weightedAccelerationContribution: 0,
+      weightedEngagementContribution: 0,
+      weightedInfluenceContribution: 0,
+    },
   };
 }
 
@@ -2496,6 +2999,17 @@ function buildEmptyResult(
   posts,
   now
 ) {
+  const rawReach =
+    posts.reduce(
+      (sum, post) =>
+        sum +
+        safeNumber(
+          post.reach,
+          0
+        ),
+      0
+    );
+
   return {
     category:
       "trend",
@@ -2522,18 +3036,11 @@ function buildEmptyResult(
       ),
 
     approximateReach:
-      humanizeNumber(
-        posts.reduce(
-          (sum, post) =>
-            sum +
-            safeNumber(
-              post.reach ??
-              post.authorReach,
-              0
-            ),
-          0
+      rawReach > 0
+        ? humanizeNumber(
+          rawReach
         )
-      ),
+        : "Unknown",
 
     growthPercent:
       "+0%",

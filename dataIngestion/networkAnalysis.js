@@ -45,78 +45,8 @@
  *
  *   canonical.networkRelationships
  *
- * Example:
- *
- * {
- *   relationshipId: "x:200:x:100:follow",
- *   platform: "x",
- *   sourceUserId: "200",
- *   targetUserId: "100",
- *   type: "follow",
- *   observedAt: "2026-09-15T00:01:00Z"
- * }
- *
- * For likes:
- *
- * {
- *   relationshipId: "x:300:x:100:like",
- *   platform: "x",
- *   sourceUserId: "300",
- *   targetUserId: "100",
- *   type: "like",
- *   postId: "123456",
- *   observedAt: "2026-09-15T00:02:00Z"
- * }
- *
  * Aggregate event.engagement.likes is still used as content impact,
  * but does NOT create fake liker nodes or edges.
- *
- * ACTUAL CANONICAL EVENT SHAPE:
- *
- * {
- *   eventId,
- *   platform,
- *   platformPostId,
- *
- *   content: {
- *     text,
- *     hashtags: [],
- *     mentions: [],
- *     urls: []
- *   },
- *
- *   author: {
- *     authorId,
- *     authorHandle,
- *     authorName,
- *     authorBio,
- *     authorLocation
- *   },
- *
- *   time: {
- *     publishedAt
- *   },
- *
- *   engagement: {
- *     likes,
- *     replies,
- *     reposts,
- *     quotes,
- *     views
- *   },
- *
- *   relationships: {
- *     replyToId,
- *     replyToAuthorId,
- *     quoteOfId,
- *     forwardOfId
- *   },
- *
- *   platformData: {
- *     authorFollowers,
- *     authorVerified
- *   }
- * }
  */
 
 // ---------------------------------------------------------------------------
@@ -140,24 +70,7 @@ const PAGERANK_TOLERANCE = 0.000001;
 // ---------------------------------------------------------------------------
 // Influence weights
 // ---------------------------------------------------------------------------
-//
-// Content Impact:
-//   likes + comments + shares/reposts
-//
-// Network Authority:
-//   PageRank
-//
-// Reach:
-//   follower/reach signal
-//
-// Received Influence:
-//   mentions + replies + quotes + shares + likes received
-//
-// Interaction Activity:
-//   total interactions + outgoing network interactions
-//
-// All components are normalized before being combined.
-//
+
 const INFLUENCE_WEIGHTS = {
   contentImpact: 0.30,
   networkAuthority: 0.25,
@@ -182,29 +95,7 @@ const RELATIONSHIP_TYPES = {
 // ---------------------------------------------------------------------------
 // Interaction / relationship weights
 // ---------------------------------------------------------------------------
-//
-// These are graph edge weights.
-//
-// They are NOT final influence weights.
-//
-// Follow:
-//   1
-//
-// Like:
-//   1
-//
-// Mention:
-//   1
-//
-// Reply:
-//   2
-//
-// Quote:
-//   3
-//
-// Repost:
-//   3
-//
+
 const RELATIONSHIP_WEIGHTS = {
   follow: 1,
   like: 1,
@@ -228,26 +119,6 @@ const IGNORE_SELF_INTERACTIONS = true;
 /**
  * Analyze the network for a canonical collection.
  *
- * Supports:
- *
- *   canonical.events
- *
- * and optionally:
- *
- *   canonical.networkRelationships
- *
- * Example network relationship:
- *
- * {
- *   relationshipId,
- *   platform,
- *   sourceUserId,
- *   targetUserId,
- *   type: "follow" | "like",
- *   postId?,
- *   observedAt?
- * }
- *
  * @param {object} canonical
  *
  * @returns {{
@@ -261,8 +132,7 @@ const IGNORE_SELF_INTERACTIONS = true;
 function analyzeNetwork(canonical) {
   validateCanonicalInput(canonical);
 
-  const events =
-    canonical.events;
+  const events = canonical.events;
 
   if (events.length === 0) {
     return emptyNetworkResult();
@@ -291,13 +161,6 @@ function analyzeNetwork(canonical) {
 
   // ----------------------------------------------------------------------
   // Signal 1: Explicit social relationships
-  //
-  // This currently supports:
-  //
-  //   follow
-  //   like
-  //
-  // We only create these edges when explicit user IDs are supplied.
   // ----------------------------------------------------------------------
 
   const relationshipStats =
@@ -355,15 +218,13 @@ function analyzeNetwork(canonical) {
   // 4. Keep internal graph objects
   // ======================================================================
 
-  const rawNodes =
-    [
-      ...nodeMap.values()
-    ];
+  const rawNodes = [
+    ...nodeMap.values(),
+  ];
 
-  const rawEdges =
-    [
-      ...edgeMap.values()
-    ];
+  const rawEdges = [
+    ...edgeMap.values(),
+  ];
 
   // ======================================================================
   // 5. Calculate centrality
@@ -496,10 +357,12 @@ function analyzeNetwork(canonical) {
     const top =
       topInfluencers[0];
 
+    // `influence` is the canonical value.
+    // `score` and `influenceScore` are compatibility aliases.
     console.log(
       `[Network] Top influencer: ` +
       `${top.label} ` +
-      `(score=${top.influence ?? 0})`
+      `(score=${top.influence})`
     );
   }
 
@@ -733,15 +596,7 @@ function buildNodeIndex(
     const node =
       nodeMap.get(nodeId);
 
-    // -------------------------------------------------------------------
-    // Content activity
-    // -------------------------------------------------------------------
-
     node.metrics.posts += 1;
-
-    // -------------------------------------------------------------------
-    // Engagement
-    // -------------------------------------------------------------------
 
     const engagement =
       event.engagement ?? {};
@@ -771,10 +626,6 @@ function buildNodeIndex(
         engagement.views
       );
 
-    // -------------------------------------------------------------------
-    // Store aggregate engagement
-    // -------------------------------------------------------------------
-
     node.metrics.likesReceived +=
       likes;
 
@@ -790,23 +641,11 @@ function buildNodeIndex(
     node.metrics.views +=
       views;
 
-    // -------------------------------------------------------------------
-    // Interaction calculation
-    // -------------------------------------------------------------------
-
     node.metrics.totalInteractions +=
       likes +
       replies +
       reposts +
       quotes;
-
-    // -------------------------------------------------------------------
-    // Author followers
-    //
-    // This is an aggregate follower count.
-    //
-    // It is NOT converted into individual follower edges.
-    // -------------------------------------------------------------------
 
     const followers =
       toNonNegativeNumber(
@@ -821,10 +660,6 @@ function buildNodeIndex(
       node.profile.followers =
         followers;
     }
-
-    // -------------------------------------------------------------------
-    // Reach
-    // -------------------------------------------------------------------
 
     if (
       followers >
@@ -841,10 +676,6 @@ function buildNodeIndex(
       node.metrics.maxReach =
         views;
     }
-
-    // -------------------------------------------------------------------
-    // Hashtags
-    // -------------------------------------------------------------------
 
     if (
       Array.isArray(
@@ -868,10 +699,6 @@ function buildNodeIndex(
       }
     }
 
-    // -------------------------------------------------------------------
-    // Platform
-    // -------------------------------------------------------------------
-
     if (
       !node.platform &&
       event.platform
@@ -881,10 +708,6 @@ function buildNodeIndex(
           event.platform
         );
     }
-
-    // -------------------------------------------------------------------
-    // Verified
-    // -------------------------------------------------------------------
 
     if (
       event.platformData
@@ -934,7 +757,6 @@ function createNode(
     metrics: {
       posts: 0,
 
-      // Content engagement received
       likesReceived: 0,
       commentsReceived: 0,
       sharesReceived: 0,
@@ -946,37 +768,27 @@ function createNode(
 
       maxReach: 0,
 
-      // Mentions
       mentionsGiven: 0,
       mentionsReceived: 0,
 
-      // Replies
       repliesGiven: 0,
       repliesReceived: 0,
 
-      // Quotes
       quotesGiven: 0,
       quotesReceived: 0,
 
-      // Reposts
       sharesGiven: 0,
       sharesReceived: 0,
 
-      // Explicit likes
       likesGiven: 0,
       likesReceivedNetwork: 0,
 
-      // Explicit follows
       followsGiven: 0,
       followsReceived: 0,
     },
 
     hashtags:
       new Set(),
-
-    // -----------------------------------------------------------------
-    // Centrality
-    // -----------------------------------------------------------------
 
     centrality: {
       inDegree: 0,
@@ -991,10 +803,6 @@ function createNode(
 
       pagerank: 0,
     },
-
-    // -----------------------------------------------------------------
-    // Influence
-    // -----------------------------------------------------------------
 
     influenceScore: 0,
 
@@ -1195,21 +1003,6 @@ function buildPostKey(
 // ===========================================================================
 // 3. EXPLICIT NETWORK RELATIONSHIPS
 // ===========================================================================
-//
-// Handles:
-//
-//   follow
-//   like
-//
-// These relationships MUST contain explicit user IDs.
-//
-// We do NOT derive them from:
-//
-//   authorFollowers
-//   engagement.likes
-//
-// because those are aggregate values.
-//
 
 function extractNetworkRelationships(
   relationships,
@@ -1302,13 +1095,6 @@ function extractNetworkRelationships(
       continue;
     }
 
-    // -------------------------------------------------------------------
-    // Explicit social relationship may reference users who did not
-    // publish inside the collection.
-    //
-    // Create them as external nodes rather than dropping the edge.
-    // -------------------------------------------------------------------
-
     if (
       !nodeMap.has(sourceId)
     ) {
@@ -1341,10 +1127,6 @@ function extractNetworkRelationships(
     const targetNode =
       nodeMap.get(targetId);
 
-    // -------------------------------------------------------------------
-    // Follow
-    // -------------------------------------------------------------------
-
     if (
       type ===
       RELATIONSHIP_TYPES.FOLLOW
@@ -1356,10 +1138,6 @@ function extractNetworkRelationships(
         .followsReceived += 1;
     }
 
-    // -------------------------------------------------------------------
-    // Like
-    // -------------------------------------------------------------------
-
     if (
       type ===
       RELATIONSHIP_TYPES.LIKE
@@ -1370,10 +1148,6 @@ function extractNetworkRelationships(
       targetNode.metrics
         .likesReceivedNetwork += 1;
     }
-
-    // -------------------------------------------------------------------
-    // Edge
-    // -------------------------------------------------------------------
 
     addInteractionEdge({
       edgeMap,
@@ -2116,8 +1890,7 @@ function createBaseExternalNode(
   return {
     id,
 
-    username:
-      username,
+    username,
 
     displayName:
       username,
@@ -2266,13 +2039,23 @@ function addInteractionEdge({
     event?.time?.publishedAt
   );
 
-  if (event?.eventId) {
+  if (
+    event?.eventId &&
+    !edge.eventIds.includes(
+      event.eventId
+    )
+  ) {
     edge.eventIds.push(
       event.eventId
     );
   }
 
-  if (eventId) {
+  if (
+    eventId &&
+    !edge.eventIds.includes(
+      eventId
+    )
+  ) {
     edge.eventIds.push(
       eventId
     );
@@ -3284,14 +3067,17 @@ function calculateInfluence(
           .interactionActivity
       );
 
+    const finalScore =
+      round(
+        score * 100,
+        2
+      );
+
     result.set(
       node.id,
       {
         score:
-          round(
-            score * 100,
-            2
-          ),
+          finalScore,
 
         components: {
           contentImpact:
@@ -3442,22 +3228,40 @@ function applyInfluenceToNodes(
           item.influence
       )
       .sort(
-        (a, b) =>
-          b.influence.score -
-          a.influence.score
+        (a, b) => {
+          const scoreA =
+            toNonNegativeNumber(
+              a.influence?.score
+            );
+
+          const scoreB =
+            toNonNegativeNumber(
+              b.influence?.score
+            );
+
+          return (
+            scoreB -
+            scoreA
+          );
+        }
       );
 
   rankedNodes.forEach(
     (item, index) => {
+      const score =
+        toNonNegativeNumber(
+          item.influence.score
+        );
+
       item.node.influenceScore =
-        item.influence.score;
+        score;
 
       item.node.influenceRank =
         index + 1;
 
       item.node.influenceTier =
         getInfluenceTier(
-          item.influence.score
+          score
         );
 
       item.node.influenceComponents =
@@ -3542,7 +3346,9 @@ function buildGraphSummary(
     edges.reduce(
       (sum, edge) =>
         sum +
-        edge.weight,
+        toNonNegativeNumber(
+          edge.weight
+        ),
       0
     );
 
@@ -3559,28 +3365,40 @@ function buildGraphSummary(
     const edge of edges
   ) {
     relationshipCounts.follows +=
-      edge.interactions
-        .follows ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .follows
+      );
 
     relationshipCounts.likes +=
-      edge.interactions
-        .likes ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .likes
+      );
 
     relationshipCounts.mentions +=
-      edge.interactions
-        .mentions ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .mentions
+      );
 
     relationshipCounts.replies +=
-      edge.interactions
-        .replies ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .replies
+      );
 
     relationshipCounts.quotes +=
-      edge.interactions
-        .quotes ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .quotes
+      );
 
     relationshipCounts.reposts +=
-      edge.interactions
-        .shares ?? 0;
+      toNonNegativeNumber(
+        edge.interactions
+          .shares
+      );
   }
 
   const nodeCount =
@@ -3641,31 +3459,44 @@ function buildInfluencerRanking(
     )
     .sort(
       (a, b) => {
+        const influenceA =
+          toNonNegativeNumber(
+            a.influenceScore
+          );
+
+        const influenceB =
+          toNonNegativeNumber(
+            b.influenceScore
+          );
+
         if (
-          b.influenceScore !==
-          a.influenceScore
+          influenceB !==
+          influenceA
         ) {
           return (
-            b.influenceScore -
-            a.influenceScore
+            influenceB -
+            influenceA
           );
         }
 
-        const pageRankDifference =
-          (
-            b.centrality?.pagerank ??
-            0
-          ) -
-          (
-            a.centrality?.pagerank ??
-            0
+        const pageRankA =
+          toNonNegativeNumber(
+            a.centrality?.pagerank
+          );
+
+        const pageRankB =
+          toNonNegativeNumber(
+            b.centrality?.pagerank
           );
 
         if (
-          pageRankDifference !==
-          0
+          pageRankB !==
+          pageRankA
         ) {
-          return pageRankDifference;
+          return (
+            pageRankB -
+            pageRankA
+          );
         }
 
         return (
@@ -3680,139 +3511,181 @@ function buildInfluencerRanking(
       TOP_INFLUENCER_COUNT
     )
     .map(
-      node => ({
-        id:
-          node.id,
+      node => {
+        const finalInfluence =
+          toNonNegativeNumber(
+            node.influenceScore
+          );
 
-        label:
-          node.username ??
-          node.id,
+        return {
+          id:
+            node.id,
 
-        username:
-          node.username,
+          label:
+            node.username ??
+            node.id,
 
-        displayName:
-          node.displayName,
+          username:
+            node.username,
 
-        platform:
-          node.platform,
+          displayName:
+            node.displayName,
 
-        influence:
-          node.influenceScore,
+          platform:
+            node.platform,
 
-        influenceRank:
-          node.influenceRank,
+          // ---------------------------------------------------------------
+          // CANONICAL INFLUENCE FIELD
+          // ---------------------------------------------------------------
 
-        influenceTier:
-          node.influenceTier,
+          influence:
+            finalInfluence,
 
-        centrality: {
-          inDegree:
-            node.centrality
-              ?.inDegree ??
-            0,
+          // ---------------------------------------------------------------
+          // COMPATIBILITY ALIASES
+          //
+          // These prevent downstream consumers that expect either
+          // `score` or `influenceScore` from receiving undefined/n/a.
+          // ---------------------------------------------------------------
 
-          outDegree:
-            node.centrality
-              ?.outDegree ??
-            0,
+          score:
+            finalInfluence,
 
-          degree:
-            node.centrality
-              ?.degree ??
-            0,
+          influenceScore:
+            finalInfluence,
 
-          degreeCentrality:
-            node.centrality
-              ?.degreeCentrality ??
-            0,
+          influenceRank:
+            node.influenceRank,
 
-          betweennessCentrality:
-            node.centrality
-              ?.betweennessCentrality ??
-            0,
+          influenceTier:
+            node.influenceTier,
 
-          pagerank:
-            node.centrality
-              ?.pagerank ??
-            0,
-        },
+          centrality: {
+            inDegree:
+              node.centrality
+                ?.inDegree ??
+              0,
 
-        networkSignals: {
-          // Social
-          followsReceived:
-            node.metrics
-              .followsReceived,
+            outDegree:
+              node.centrality
+                ?.outDegree ??
+              0,
 
-          followsGiven:
-            node.metrics
-              .followsGiven,
+            degree:
+              node.centrality
+                ?.degree ??
+              0,
 
-          likesReceived:
-            node.metrics
-              .likesReceivedNetwork,
+            degreeCentrality:
+              node.centrality
+                ?.degreeCentrality ??
+              0,
 
-          likesGiven:
-            node.metrics
-              .likesGiven,
+            betweennessCentrality:
+              node.centrality
+                ?.betweennessCentrality ??
+              0,
 
-          // Interaction
-          mentionsReceived:
-            node.metrics
-              .mentionsReceived,
+            pagerank:
+              node.centrality
+                ?.pagerank ??
+              0,
+          },
 
-          repliesReceived:
-            node.metrics
-              .repliesReceived,
+          influenceComponents:
+            node.influenceComponents ?? {
+              contentImpact: 0,
+              networkAuthority: 0,
+              reach: 0,
+              receivedInfluence: 0,
+              interactionActivity: 0,
+            },
 
-          quotesReceived:
-            node.metrics
-              .quotesReceived,
+          influenceSignals:
+            node.influenceSignals ?? {
+              contentImpact: 0,
+              networkAuthority: 0,
+              reach: 0,
+              receivedInfluence: 0,
+              interactionActivity: 0,
+            },
 
-          sharesReceived:
-            node.metrics
-              .sharesReceived,
+          networkSignals: {
+            followsReceived:
+              node.metrics
+                .followsReceived,
 
-          mentionsGiven:
-            node.metrics
-              .mentionsGiven,
+            followsGiven:
+              node.metrics
+                .followsGiven,
 
-          repliesGiven:
-            node.metrics
-              .repliesGiven,
+            likesReceived:
+              node.metrics
+                .likesReceivedNetwork,
 
-          quotesGiven:
-            node.metrics
-              .quotesGiven,
+            likesGiven:
+              node.metrics
+                .likesGiven,
 
-          sharesGiven:
-            node.metrics
-              .sharesGiven,
+            mentionsReceived:
+              node.metrics
+                .mentionsReceived,
 
-          totalInteractions:
-            node.metrics
-              .totalInteractions,
+            repliesReceived:
+              node.metrics
+                .repliesReceived,
 
-          posts:
-            node.metrics
-              .posts,
+            quotesReceived:
+              node.metrics
+                .quotesReceived,
 
-          followers:
-            node.profile
-              ?.followers ??
-            0,
+            sharesReceived:
+              node.metrics
+                .sharesReceived,
 
-          reach:
-            Math.max(
+            mentionsGiven:
+              node.metrics
+                .mentionsGiven,
+
+            repliesGiven:
+              node.metrics
+                .repliesGiven,
+
+            quotesGiven:
+              node.metrics
+                .quotesGiven,
+
+            sharesGiven:
+              node.metrics
+                .sharesGiven,
+
+            totalInteractions:
+              node.metrics
+                .totalInteractions,
+
+            posts:
+              node.metrics
+                .posts,
+
+            followers:
               node.profile
                 ?.followers ??
               0,
-              node.metrics
-                ?.maxReach ??
-              0
-            ),
-        },
-      })
+
+            reach:
+              Math.max(
+                toNonNegativeNumber(
+                  node.profile
+                    ?.followers
+                ),
+                toNonNegativeNumber(
+                  node.metrics
+                    ?.maxReach
+                )
+              ),
+          },
+        };
+      }
     );
 }
 
@@ -3824,6 +3697,11 @@ function buildInfluencerRanking(
 function finalizeNode(
   node
 ) {
+  const finalInfluence =
+    toNonNegativeNumber(
+      node.influenceScore
+    );
+
   return {
     id:
       node.id,
@@ -3901,9 +3779,16 @@ function finalizeNode(
         0,
     },
 
+    // Canonical final influence score.
     influence:
-      node.influenceScore ??
-      0,
+      finalInfluence,
+
+    // Compatibility aliases.
+    score:
+      finalInfluence,
+
+    influenceScore:
+      finalInfluence,
 
     influenceRank:
       node.influenceRank ??
@@ -3956,7 +3841,9 @@ function finalizeEdge(
 
     weight:
       round(
-        edge.weight,
+        toNonNegativeNumber(
+          edge.weight
+        ),
         4
       ),
 
@@ -3968,7 +3855,9 @@ function finalizeEdge(
 
     eventIds: [
       ...new Set(
-        edge.eventIds
+        edge.eventIds.filter(
+          Boolean
+        )
       ),
     ],
   };
@@ -4157,6 +4046,14 @@ function normalizeHashtag(
 function toNonNegativeNumber(
   value
 ) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return 0;
+  }
+
   const number =
     Number(value);
 
@@ -4179,12 +4076,19 @@ function round(
   number,
   decimals = 4
 ) {
+  const safeNumber =
+    Number.isFinite(
+      Number(number)
+    )
+      ? Number(number)
+      : 0;
+
   const factor =
     10 ** decimals;
 
   return (
     Math.round(
-      number * factor
+      safeNumber * factor
     ) / factor
   );
 }

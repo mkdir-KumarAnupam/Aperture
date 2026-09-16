@@ -24,7 +24,6 @@
 //   - Emotions
 //   - Stance
 //   - Sarcasm
-//   - Reason
 //
 // IMPORTANT:
 //
@@ -51,7 +50,8 @@ import {
   classifyTier2,
   classifyTier2Batch,
 } from "./tier2.js";
-import 'dotenv/config';
+
+import "dotenv/config";
 
 // ============================================================================
 // Configuration
@@ -64,7 +64,7 @@ const TIER1_THRESHOLD =
 // Empty Result
 // ============================================================================
 
-function emptySentimentResult(reason = null) {
+function emptySentimentResult() {
   return {
     polarity: {
       label: null,
@@ -84,8 +84,6 @@ function emptySentimentResult(reason = null) {
     },
 
     tier: null,
-
-    reason,
   };
 }
 
@@ -114,7 +112,10 @@ function normalizeTier1Result(result) {
     typeof result.score === "number"
       ? Math.min(
         1,
-        Math.max(0, result.score)
+        Math.max(
+          0,
+          result.score
+        )
       )
       : null;
 
@@ -146,8 +147,6 @@ function normalizeTier1Result(result) {
     },
 
     tier: 1,
-
-    reason: null,
   };
 }
 
@@ -203,7 +202,9 @@ function normalizeTier2Result(result) {
   // --------------------------------------------------------------------------
 
   const emotions =
-    Array.isArray(result.emotions)
+    Array.isArray(
+      result.emotions
+    )
       ? result.emotions
         .filter(
           (emotion) =>
@@ -213,21 +214,23 @@ function normalizeTier2Result(result) {
             typeof emotion.confidence ===
             "number"
         )
-        .map((emotion) => ({
-          label:
-            emotion.label
-              .toLowerCase()
-              .trim(),
+        .map(
+          (emotion) => ({
+            label:
+              emotion.label
+                .toLowerCase()
+                .trim(),
 
-          confidence:
-            Math.min(
-              1,
-              Math.max(
-                0,
-                emotion.confidence
-              )
-            ),
-        }))
+            confidence:
+              Math.min(
+                1,
+                Math.max(
+                  0,
+                  emotion.confidence
+                )
+              ),
+          })
+        )
       : [];
 
   // --------------------------------------------------------------------------
@@ -277,17 +280,6 @@ function normalizeTier2Result(result) {
       : null;
 
   // --------------------------------------------------------------------------
-  // Reason
-  // --------------------------------------------------------------------------
-
-  const reason =
-    typeof result.reason === "string"
-      ? result.reason
-        .trim()
-        .slice(0, 300) || null
-      : null;
-
-  // --------------------------------------------------------------------------
   // Final
   // --------------------------------------------------------------------------
 
@@ -310,8 +302,6 @@ function normalizeTier2Result(result) {
     },
 
     tier: 2,
-
-    reason,
   };
 }
 
@@ -330,14 +320,18 @@ function normalizeTier2Result(result) {
 // ============================================================================
 
 function extractTier2Results(response) {
-  if (Array.isArray(response)) {
+  if (
+    Array.isArray(response)
+  ) {
     return response;
   }
 
   if (
     response &&
     typeof response === "object" &&
-    Array.isArray(response.results)
+    Array.isArray(
+      response.results
+    )
   ) {
     return response.results;
   }
@@ -371,21 +365,27 @@ function getTier2ResultId(result) {
       result.id !== undefined &&
       result.id !== null
     ) {
-      return String(result.id);
+      return String(
+        result.id
+      );
     }
 
     if (
       result.eventId !== undefined &&
       result.eventId !== null
     ) {
-      return String(result.eventId);
+      return String(
+        result.eventId
+      );
     }
 
     if (
       result.index !== undefined &&
       result.index !== null
     ) {
-      return String(result.index);
+      return String(
+        result.index
+      );
     }
   }
 
@@ -400,9 +400,12 @@ function getTier2ResultId(result) {
 //
 // For bulk processing, analyzeBatch() should be used because it enables
 // efficient Tier 2 batching.
+//
 // ============================================================================
 
-export async function analyzeSentiment(text) {
+export async function analyzeSentiment(
+  text
+) {
   // --------------------------------------------------------------------------
   // Validate
   // --------------------------------------------------------------------------
@@ -411,9 +414,7 @@ export async function analyzeSentiment(text) {
     typeof text !== "string" ||
     !text.trim()
   ) {
-    return emptySentimentResult(
-      "No text available."
-    );
+    return emptySentimentResult();
   }
 
   const cleanText =
@@ -453,11 +454,13 @@ export async function analyzeSentiment(text) {
         tier2
       );
     } catch (tier2Error) {
-      return emptySentimentResult(
-        `Tier 1 and Tier 2 failed: ${tier2Error?.message ??
-        "unknown error"
-        }`
+      console.error(
+        "[Sentiment] Tier 2 failed:",
+        tier2Error?.message ??
+        tier2Error
       );
+
+      return emptySentimentResult();
     }
   }
 
@@ -468,8 +471,11 @@ export async function analyzeSentiment(text) {
   if (
     tier1 &&
     typeof tier1.score === "number" &&
-    Number.isFinite(tier1.score) &&
-    tier1.score >= TIER1_THRESHOLD
+    Number.isFinite(
+      tier1.score
+    ) &&
+    tier1.score >=
+    TIER1_THRESHOLD
   ) {
     try {
       return normalizeTier1Result(
@@ -517,22 +523,11 @@ export async function analyzeSentiment(text) {
      */
 
     try {
-      return {
-        ...normalizeTier1Result(
-          tier1
-        ),
-
-        reason:
-          `Tier 2 unavailable: ${error?.message ??
-          "unknown error"
-          }`,
-      };
-    } catch {
-      return emptySentimentResult(
-        `Tier 2 failed: ${error?.message ??
-        "unknown error"
-        }`
+      return normalizeTier1Result(
+        tier1
       );
+    } catch {
+      return emptySentimentResult();
     }
   }
 }
@@ -586,13 +581,17 @@ export async function analyzeSentiment(text) {
 export async function analyzeBatch(
   texts
 ) {
-  if (!Array.isArray(texts)) {
+  if (
+    !Array.isArray(texts)
+  ) {
     throw new TypeError(
       "analyzeBatch() expects an array of texts."
     );
   }
 
-  if (texts.length === 0) {
+  if (
+    texts.length === 0
+  ) {
     return [];
   }
 
@@ -622,9 +621,7 @@ export async function analyzeBatch(
       !text.trim()
     ) {
       results[i] =
-        emptySentimentResult(
-          "No text available."
-        );
+        emptySentimentResult();
 
       console.log(
         `[${i + 1}/${total}] ` +
@@ -701,12 +698,10 @@ export async function analyzeBatch(
       const originalIndex =
         validIndexes[i];
 
-      results[originalIndex] =
-        emptySentimentResult(
-          `Tier 1 batch failed: ${error?.message ??
-          "unknown error"
-          }`
-        );
+      results[
+        originalIndex
+      ] =
+        emptySentimentResult();
     }
 
     return results;
@@ -717,7 +712,9 @@ export async function analyzeBatch(
   // ==========================================================================
 
   if (
-    !Array.isArray(tier1Results) ||
+    !Array.isArray(
+      tier1Results
+    ) ||
     tier1Results.length !==
     validTexts.length
   ) {
@@ -733,10 +730,10 @@ export async function analyzeBatch(
       const originalIndex =
         validIndexes[i];
 
-      results[originalIndex] =
-        emptySentimentResult(
-          "Tier 1 returned an invalid batch response."
-        );
+      results[
+        originalIndex
+      ] =
+        emptySentimentResult();
     }
 
     return results;
@@ -776,7 +773,9 @@ export async function analyzeBatch(
       TIER1_THRESHOLD
     ) {
       try {
-        results[originalIndex] =
+        results[
+          originalIndex
+        ] =
           normalizeTier1Result(
             tier1
           );
@@ -944,7 +943,9 @@ export async function analyzeBatch(
           tier2Result
         );
 
-      if (id === null) {
+      if (
+        id === null
+      ) {
         hasIds = false;
         break;
       }
@@ -983,12 +984,12 @@ export async function analyzeBatch(
         localIndex
         ];
 
-      // ----------------------------------------------------------------------
-      // Prefer ID mapping.
-      //
-      // If the implementation does not return IDs, fall back to positional
-      // matching.
-      // ----------------------------------------------------------------------
+      /*
+       * Prefer ID mapping.
+       *
+       * If the implementation does not return IDs, fall back to positional
+       * matching.
+       */
 
       const rawResult =
         hasIds
@@ -1018,22 +1019,19 @@ export async function analyzeBatch(
          */
 
         try {
-          results[originalIndex] =
+          results[
+            originalIndex
+          ] =
             normalizeTier1Result(
               tier1Results[
               localIndex
               ]
             );
-
+        } catch {
           results[
             originalIndex
-          ].reason =
-            "Tier 2 returned no result for this post.";
-        } catch {
-          results[originalIndex] =
-            emptySentimentResult(
-              "Tier 2 returned no result."
-            );
+          ] =
+            emptySentimentResult();
         }
 
         continue;
@@ -1044,7 +1042,9 @@ export async function analyzeBatch(
       // ----------------------------------------------------------------------
 
       try {
-        results[originalIndex] =
+        results[
+          originalIndex
+        ] =
           normalizeTier2Result(
             rawResult
           );
@@ -1088,27 +1088,19 @@ export async function analyzeBatch(
          */
 
         try {
-          results[originalIndex] =
+          results[
+            originalIndex
+          ] =
             normalizeTier1Result(
               tier1Results[
               localIndex
               ]
             );
-
+        } catch {
           results[
             originalIndex
-          ].reason =
-            `Tier 2 returned invalid data: ${error?.message ??
-            "unknown error"
-            }`;
-
-        } catch {
-          results[originalIndex] =
-            emptySentimentResult(
-              `Tier 2 returned invalid data: ${error?.message ??
-              "unknown error"
-              }`
-            );
+          ] =
+            emptySentimentResult();
         }
       }
     }
@@ -1133,7 +1125,7 @@ export async function analyzeBatch(
     //
     //   5 individual Groq requests
     //
-    // and could make your 429 problem substantially worse.
+    // and could make the 429 problem substantially worse.
     //
     // ==========================================================================
 
@@ -1162,19 +1154,14 @@ export async function analyzeBatch(
         ];
 
       try {
-        results[originalIndex] =
+        results[
+          originalIndex
+        ] =
           normalizeTier1Result(
             tier1Results[
             localIndex
             ]
           );
-
-        results[
-          originalIndex
-        ].reason =
-          `Tier 2 unavailable: ${error?.message ??
-          "unknown error"
-          }`;
 
         console.log(
           `[${originalIndex + 1}/${total}] ` +
@@ -1183,12 +1170,10 @@ export async function analyzeBatch(
         );
 
       } catch {
-        results[originalIndex] =
-          emptySentimentResult(
-            `Tier 2 failed: ${error?.message ??
-            "unknown error"
-            }`
-          );
+        results[
+          originalIndex
+        ] =
+          emptySentimentResult();
       }
     }
   }

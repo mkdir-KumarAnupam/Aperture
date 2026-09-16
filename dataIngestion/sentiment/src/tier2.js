@@ -8,9 +8,13 @@
 //
 //   Tier 1 uncertain posts
 //          ↓
+//   normalize + validate
+//          ↓
 //   chunk into batches
 //          ↓
 //   ONE Groq request per batch
+//          ↓
+//   validate response
 //          ↓
 //   one result per post
 //
@@ -32,6 +36,7 @@
 //   - Defensive validation
 //   - No canonical-data mutation
 //   - 401/403 are NON-RETRYABLE
+//   - At most 2 emotions per post
 //
 // ============================================================================
 
@@ -50,17 +55,17 @@ const __dirname = path.dirname(__filename);
 /*
  * Expected structure:
  *
- * dataingestion/
+ * dataIngestion/
  * ├── .env
  * └── sentiment/
  *     └── src/
  *         └── tier2.js
  *
  * __dirname:
- *   dataingestion/sentiment/src
+ *   dataIngestion/sentiment/src
  *
  * ../..:
- *   dataingestion
+ *   dataIngestion
  */
 
 const DATA_INGESTION_ROOT = path.resolve(
@@ -75,12 +80,13 @@ const ROOT_ENV_PATH = path.join(
 );
 
 /*
- * Make dataingestion/.env authoritative.
+ * Make dataIngestion/.env authoritative.
  *
  * This prevents a stale GROQ_API_KEY or configuration
  * injected into process.env from silently overriding
  * the project's .env file.
  */
+
 const dotenvResult = dotenv.config({
   path: ROOT_ENV_PATH,
   override: true,
@@ -118,36 +124,65 @@ const GROQ_URL =
     : "https://api.groq.com/openai/v1/chat/completions";
 
 // ============================================================================
+// Environment number helper
+// ============================================================================
+
+function getEnvNumber(
+  name,
+  fallback
+) {
+  const raw =
+    process.env[name];
+
+  if (
+    raw === undefined ||
+    raw === null ||
+    String(raw).trim() === ""
+  ) {
+    return fallback;
+  }
+
+  const value =
+    Number(raw);
+
+  if (
+    !Number.isFinite(value)
+  ) {
+    return fallback;
+  }
+
+  return value;
+}
+
+// ============================================================================
 // Input limits
 // ============================================================================
 
 const MAX_INPUT_CHARACTERS =
   Math.max(
     100,
-    Number(
-      process.env.TIER2_MAX_INPUT_CHARACTERS
-    ) || 1800
+    getEnvNumber(
+      "TIER2_MAX_INPUT_CHARACTERS",
+      1800
+    )
   );
 
 // ============================================================================
 // Batch size
 // ============================================================================
 //
-// IMPORTANT:
-//
-// This is the ONLY batch-size setting used by this module.
-//
 // Default:
-//   5 posts
+//
+//   3 posts
 //
 // Example:
 //
-//   TIER2_BATCH_SIZE=5
+//   TIER2_BATCH_SIZE=3
 //
-// 12 uncertain posts:
+// 8 uncertain posts:
 //
-//   Batch 1 → 5
-//   Batch 2 → 5
+//   Batch 1 → 3
+//   Batch 2 → 3
 //   Batch 3 → 2
 //
 // Exactly 3 Groq requests.
@@ -157,62 +192,137 @@ const MAX_INPUT_CHARACTERS =
 const TIER2_BATCH_SIZE =
   Math.max(
     1,
-    Number(
-      process.env.TIER2_BATCH_SIZE
-    ) || 5
+    Math.floor(
+      getEnvNumber(
+        "TIER2_BATCH_SIZE",
+        3
+      )
+    )
   );
 
 // ============================================================================
 // Output token limit
 // ============================================================================
 //
-// Prefer:
+// PRIMARY:
 //
 //   TIER2_MAX_OUTPUT_TOKENS
 //
-// Backwards-compatible fallback:
+// LEGACY FALLBACK:
 //
 //   MAX_OUTPUT_TOKENS
 //
-// Default:
-//   600
+// DEFAULT:
+//
+//   300
 //
 // ============================================================================
 
 const MAX_OUTPUT_TOKENS =
   Math.max(
     100,
-    Number(
-      process.env.TIER2_MAX_OUTPUT_TOKENS ??
-      process.env.MAX_OUTPUT_TOKENS
-    ) || 600
+    Math.floor(
+      getEnvNumber(
+        "TIER2_MAX_OUTPUT_TOKENS",
+        getEnvNumber(
+          "MAX_OUTPUT_TOKENS",
+          300
+        )
+      )
+    )
   );
 
 // ============================================================================
 // Request rate limiting
 // ============================================================================
+//
+// Default:
+//
+//   10 seconds between requests.
+//
+// This is intentionally conservative because
+// your current bottleneck has been Groq OTPM.
+//
+// ============================================================================
 
 const MIN_REQUEST_INTERVAL_MS =
   Math.max(
-    0,
-    Number(
-      process.env.TIER2_MIN_REQUEST_INTERVAL_MS
-    ) || 3000
+    1000,
+    getEnvNumber(
+      "TIER2_MIN_REQUEST_INTERVAL_MS",
+      10000
+    )
   );
 
-// Global cooldown after HTTP 429.
+// ============================================================================
+// Retry configuration
+// ============================================================================
+
+const MAX_RETRIES =
+  Math.max(
+    0,
+    Math.floor(
+      getEnvNumber(
+        "TIER2_MAX_RETRIES",
+        4
+      )
+    )
+  );
+
+const INITIAL_BACKOFF_MS =
+  Math.max(
+    100,
+    getEnvNumber(
+      "TIER2_INITIAL_BACKOFF_MS",
+      6000
+    )
+  );
+
+const MAX_BACKOFF_MS =
+  Math.max(
+    INITIAL_BACKOFF_MS,
+    getEnvNumber(
+      "TIER2_MAX_BACKOFF_MS",
+      60000
+    )
+  );
+
+// ============================================================================
+// Request timeout
+// ============================================================================
+
+const REQUEST_TIMEOUT_MS =
+  Math.max(
+    1000,
+    getEnvNumber(
+      "TIER2_REQUEST_TIMEOUT_MS",
+      30000
+    )
+  );
+
+// ============================================================================
+// Global cooldown
+// ============================================================================
 
 let globalCooldownUntil = 0;
 
-// Time at which the previous request started.
+// ============================================================================
+// Last request finish time
+// ============================================================================
+//
+// We measure the interval from when the previous request finishes.
+//
+// This deliberately produces a conservative effective request rate.
+//
+// ============================================================================
 
 let lastRequestTime = 0;
 
 // ============================================================================
-// Global request scheduler
+// Request scheduler
 // ============================================================================
 //
-// All Groq requests go through this chain.
+// Every Groq request passes through this chain.
 //
 // This guarantees:
 //
@@ -222,7 +332,7 @@ let lastRequestTime = 0;
 //      ↓
 //   request 3
 //
-// rather than:
+// instead of:
 //
 //   request 1 ─┐
 //   request 2 ─┼── simultaneous
@@ -230,7 +340,8 @@ let lastRequestTime = 0;
 //
 // ============================================================================
 
-let requestChain = Promise.resolve();
+let requestChain =
+  Promise.resolve();
 
 function enqueueRequest(task) {
   const next =
@@ -238,23 +349,25 @@ function enqueueRequest(task) {
       async () => {
 
         // --------------------------------------------------------------
-        // Global 429 cooldown
+        // Global cooldown
         // --------------------------------------------------------------
 
         await waitForGlobalCooldown();
 
         // --------------------------------------------------------------
-        // Minimum interval between requests
+        // Minimum request interval
         // --------------------------------------------------------------
 
-        const now = Date.now();
+        const now =
+          Date.now();
 
         const elapsed =
           now - lastRequestTime;
 
         if (
           lastRequestTime > 0 &&
-          elapsed < MIN_REQUEST_INTERVAL_MS
+          elapsed <
+          MIN_REQUEST_INTERVAL_MS
         ) {
           const wait =
             MIN_REQUEST_INTERVAL_MS -
@@ -264,25 +377,30 @@ function enqueueRequest(task) {
             `[Tier 2] Scheduler waiting ${wait}ms...`
           );
 
-          await sleep(wait);
+          await sleep(
+            wait
+          );
         }
 
-        // Cooldown could have been activated while waiting.
+        // Cooldown could have changed while
+        // waiting for the minimum interval.
 
         await waitForGlobalCooldown();
 
         try {
           return await task();
         } finally {
-          lastRequestTime = Date.now();
+          lastRequestTime =
+            Date.now();
         }
       }
     );
 
   /*
-   * Do not allow a failed request to poison the
-   * global scheduler for all future requests.
+   * Prevent a failed request from poisoning
+   * the scheduler chain.
    */
+
   requestChain =
     next.catch(
       () => undefined
@@ -311,63 +429,28 @@ function sleep(ms) {
 // ============================================================================
 
 async function waitForGlobalCooldown() {
-  const now = Date.now();
+  const now =
+    Date.now();
 
   if (
-    globalCooldownUntil <= now
+    globalCooldownUntil <=
+    now
   ) {
     return;
   }
 
   const wait =
-    globalCooldownUntil - now;
+    globalCooldownUntil -
+    now;
 
   console.warn(
     `[Tier 2] Global Groq cooldown: waiting ${wait}ms...`
   );
 
-  await sleep(wait);
+  await sleep(
+    wait
+  );
 }
-
-// ============================================================================
-// Retry configuration
-// ============================================================================
-
-const MAX_RETRIES =
-  Math.max(
-    0,
-    Number(
-      process.env.TIER2_MAX_RETRIES
-    ) || 4
-  );
-
-const INITIAL_BACKOFF_MS =
-  Math.max(
-    100,
-    Number(
-      process.env.TIER2_INITIAL_BACKOFF_MS
-    ) || 5000
-  );
-
-const MAX_BACKOFF_MS =
-  Math.max(
-    INITIAL_BACKOFF_MS,
-    Number(
-      process.env.TIER2_MAX_BACKOFF_MS
-    ) || 60000
-  );
-
-// ============================================================================
-// Timeout
-// ============================================================================
-
-const REQUEST_TIMEOUT_MS =
-  Math.max(
-    1000,
-    Number(
-      process.env.TIER2_REQUEST_TIMEOUT_MS
-    ) || 60000
-  );
 
 // ============================================================================
 // Allowed labels
@@ -406,6 +489,14 @@ const VALID_EMOTIONS =
 
 // ============================================================================
 // Text preparation
+// ============================================================================
+//
+// IMPORTANT:
+//
+// Truncation is applied to EACH INDIVIDUAL POST.
+//
+// It does NOT truncate the combined batch.
+//
 // ============================================================================
 
 function prepareText(text) {
@@ -504,12 +595,23 @@ function validateUniqueIds(posts) {
       );
     }
 
-    ids.add(post.id);
+    ids.add(
+      post.id
+    );
   }
 }
 
 // ============================================================================
 // Prompt
+// ============================================================================
+//
+// IMPORTANT:
+//
+// The output schema here MUST remain compatible with
+// the existing pipeline parser.
+//
+// Do NOT flatten polarity / stance / sarcasm.
+//
 // ============================================================================
 
 function buildMessages(posts) {
@@ -517,8 +619,7 @@ function buildMessages(posts) {
     posts
       .map(
         (post) =>
-          `POST_ID: ${post.id}\n` +
-          `TEXT: ${post.text}`
+          `ID:${post.id}\nTEXT:${post.text}`
       )
       .join(
         "\n\n"
@@ -529,50 +630,39 @@ function buildMessages(posts) {
       role: "system",
 
       content:
-        "Analyze every social-media post provided by the user.\n\n" +
+        "Classify each social-media post independently.\n" +
+        "Return ONLY valid JSON. No markdown or explanation.\n\n" +
 
-        "Return ONLY one valid JSON object.\n" +
-        "No markdown.\n" +
-        "No commentary.\n\n" +
+        "Output:\n" +
 
-        "Return exactly this structure:\n\n" +
-
-        "{\n" +
-        '  "results": [\n' +
-        "    {\n" +
-        '      "id": "POST_ID",\n' +
-        '      "polarity": {"label":"positive|neutral|negative","confidence":0.0},\n' +
-        '      "emotions": [{"label":"joy|sadness|anger|fear|anxiety|excitement|surprise|disgust|frustration|hope|love|disappointment|confusion","confidence":0.0}],\n' +
-        '      "stance": {"label":"supportive|against|neutral","confidence":0.0},\n' +
-        '      "sarcasm": {"detected":false,"confidence":0.0},\n' +
-        '      "reason":"short reason"\n' +
-        "    }\n" +
-        "  ]\n" +
-        "}\n\n" +
+        '{"results":[{"id":"POST_ID","polarity":{"label":"positive|neutral|negative","confidence":0.0},"emotions":[{"label":"joy|sadness|anger|fear|anxiety|excitement|surprise|disgust|frustration|hope|love|disappointment|confusion","confidence":0.0}],"stance":{"label":"supportive|against|neutral","confidence":0.0},"sarcasm":{"detected":false,"confidence":0.0}}]}\n\n' +
 
         "Rules:\n" +
-        "- Return exactly one result for every POST_ID.\n" +
-        "- Preserve every POST_ID exactly.\n" +
-        "- confidence must be between 0 and 1.\n" +
+        "- Exactly one result per input post.\n" +
+        "- Preserve every ID exactly.\n" +
         "- Use only the allowed labels.\n" +
-        "- emotions may be empty.\n" +
-        "- sarcasm is not an emotion.\n" +
-        "- reason must be 10 words or fewer.\n" +
+        "- Confidence values must be between 0 and 1.\n" +
+        "- Return at most 2 emotions per post.\n" +
+        "- Return only the strongest emotions.\n" +
+        "- Return [] when no clear emotion is present.\n" +
+        "- Analyze every post independently.\n" +
         "- Do not merge posts.\n" +
         "- Do not omit posts.\n" +
-        "- Do not add extra posts.\n" +
-        "- Output exactly one JSON object.",
+        "- Do not add posts.\n" +
+        "- Do not add extra fields.\n" +
+        "- Return exactly one JSON object.",
     },
 
     {
       role: "user",
-      content: postBlock,
+      content:
+        postBlock,
     },
   ];
 }
 
 // ============================================================================
-// Confidence
+// Confidence helper
 // ============================================================================
 
 function clampConfidence(value) {
@@ -597,7 +687,21 @@ function clampConfidence(value) {
 }
 
 // ============================================================================
-// JSON extraction
+// Extract JSON object
+// ============================================================================
+//
+// Handles:
+//
+//   raw JSON
+//
+// and defensively:
+//
+//   ```json
+//   {...}
+//   ```
+//
+// The model is still instructed not to use markdown.
+//
 // ============================================================================
 
 function extractJsonObject(raw) {
@@ -632,23 +736,29 @@ function extractJsonObject(raw) {
       )
       .trim();
 
-  // First attempt: entire response.
+  // First attempt:
+  // parse the entire response.
 
   try {
     return JSON.parse(
       cleaned
     );
   } catch {
-    // Continue.
+    // Continue to defensive extraction.
   }
 
-  // Second attempt: extract outer JSON object.
+  // Second attempt:
+  // extract the outer JSON object.
 
   const firstBrace =
-    cleaned.indexOf("{");
+    cleaned.indexOf(
+      "{"
+    );
 
   const lastBrace =
-    cleaned.lastIndexOf("}");
+    cleaned.lastIndexOf(
+      "}"
+    );
 
   if (
     firstBrace === -1 ||
@@ -674,7 +784,9 @@ function extractJsonObject(raw) {
 // Individual result validation
 // ============================================================================
 
-function parseIndividualResult(result) {
+function parseIndividualResult(
+  result
+) {
   if (
     !result ||
     typeof result !== "object"
@@ -712,44 +824,79 @@ function parseIndividualResult(result) {
   // Emotions
   // ========================================================================
 
-  const emotions =
-    Array.isArray(
+  if (
+    !Array.isArray(
       result?.emotions
     )
-      ? result.emotions
-        .map(
-          (emotion) => {
+  ) {
+    return null;
+  }
 
-            const label =
-              String(
-                emotion?.label ??
-                ""
-              )
-                .toLowerCase()
-                .trim();
+  /*
+   * The prompt limits emotions to 2.
+   *
+   * The parser also enforces this so a model
+   * violating the prompt cannot silently inflate
+   * output downstream.
+   */
 
-            const confidence =
-              clampConfidence(
-                emotion?.confidence
-              );
+  if (
+    result.emotions.length > 2
+  ) {
+    return null;
+  }
 
-            if (
-              !VALID_EMOTIONS.has(
-                label
-              ) ||
-              confidence === null
-            ) {
-              return null;
-            }
+  const emotions =
+    result.emotions
+      .map(
+        (emotion) => {
 
-            return {
-              label,
-              confidence,
-            };
+          const label =
+            String(
+              emotion?.label ??
+              ""
+            )
+              .toLowerCase()
+              .trim();
+
+          const confidence =
+            clampConfidence(
+              emotion?.confidence
+            );
+
+          if (
+            !VALID_EMOTIONS.has(
+              label
+            ) ||
+            confidence === null
+          ) {
+            return null;
           }
-        )
-        .filter(Boolean)
-      : [];
+
+          return {
+            label,
+            confidence,
+          };
+        }
+      )
+      .filter(
+        Boolean
+      );
+
+  /*
+   * If the model returned malformed emotion objects,
+   * do not silently discard them.
+   *
+   * The original array length tells us whether anything
+   * was invalid.
+   */
+
+  if (
+    emotions.length !==
+    result.emotions.length
+  ) {
+    return null;
+  }
 
   // ========================================================================
   // Stance
@@ -798,21 +945,8 @@ function parseIndividualResult(result) {
   }
 
   // ========================================================================
-  // Reason
+  // Preserve exact expected schema
   // ========================================================================
-
-  let reason = null;
-
-  if (
-    typeof result?.reason ===
-    "string"
-  ) {
-    reason =
-      result.reason
-        .trim()
-        .slice(0, 300) ||
-      null;
-  }
 
   return {
     polarity: {
@@ -840,8 +974,6 @@ function parseIndividualResult(result) {
       confidence:
         sarcasmConfidence,
     },
-
-    reason,
   };
 }
 
@@ -867,6 +999,13 @@ function parseBatchResponse(
     return null;
   }
 
+  const expectedIds =
+    new Set(
+      expectedPosts.map(
+        (post) => post.id
+      )
+    );
+
   const byId =
     new Map();
 
@@ -882,7 +1021,23 @@ function parseBatchResponse(
       ).trim();
 
     if (!id) {
-      continue;
+      return null;
+    }
+
+    /*
+     * Reject IDs that were not requested.
+     */
+
+    if (
+      !expectedIds.has(
+        id
+      )
+    ) {
+      console.warn(
+        `[Tier 2] Unexpected result ID returned by model: ${id}`
+      );
+
+      return null;
     }
 
     const normalized =
@@ -891,15 +1046,19 @@ function parseBatchResponse(
       );
 
     if (!normalized) {
-      continue;
+      console.warn(
+        `[Tier 2] Invalid result for POST_ID: ${id}`
+      );
+
+      return null;
     }
 
     /*
-     * Reject duplicate IDs from the model.
+     * Reject duplicate IDs.
      *
-     * Without this, the second result could silently overwrite
-     * the first one in the Map.
+     * Never silently overwrite an existing result.
      */
+
     if (
       byId.has(id)
     ) {
@@ -917,7 +1076,23 @@ function parseBatchResponse(
   }
 
   // ========================================================================
-  // Every requested post must have a valid result.
+  // Exact result count
+  // ========================================================================
+
+  if (
+    byId.size !==
+    expectedPosts.length
+  ) {
+    console.warn(
+      `[Tier 2] Model returned ${byId.size} valid results ` +
+      `for ${expectedPosts.length} expected posts.`
+    );
+
+    return null;
+  }
+
+  // ========================================================================
+  // Reconstruct output in original input order
   // ========================================================================
 
   const output = [];
@@ -948,30 +1123,16 @@ function parseBatchResponse(
     });
   }
 
-  // ========================================================================
-  // Reject unexpected IDs.
-  // ========================================================================
-
-  if (
-    byId.size !==
-    expectedPosts.length
-  ) {
-    console.warn(
-      `[Tier 2] Model returned unexpected number of results. ` +
-      `Expected ${expectedPosts.length}, received ${byId.size}.`
-    );
-
-    return null;
-  }
-
   return output;
 }
 
 // ============================================================================
-// Retry-After
+// Retry-After parser
 // ============================================================================
 
-function getRetryAfterMs(response) {
+function getRetryAfterMs(
+  response
+) {
   const value =
     response.headers.get(
       "retry-after"
@@ -988,22 +1149,81 @@ function getRetryAfterMs(response) {
     Number.isFinite(seconds) &&
     seconds >= 0
   ) {
-    return seconds * 1000;
+    return (
+      seconds *
+      1000
+    );
   }
 
   const date =
-    Date.parse(value);
+    Date.parse(
+      value
+    );
 
   if (
     !Number.isNaN(date)
   ) {
     return Math.max(
       0,
-      date - Date.now()
+      date -
+      Date.now()
     );
   }
 
   return null;
+}
+
+// ============================================================================
+// Backoff
+// ============================================================================
+
+function calculateBackoff(
+  attempt
+) {
+  const exponential =
+    INITIAL_BACKOFF_MS *
+    Math.pow(
+      2,
+      attempt
+    );
+
+  const capped =
+    Math.min(
+      MAX_BACKOFF_MS,
+      exponential
+    );
+
+  const jitter =
+    Math.floor(
+      Math.random() *
+      1000
+    );
+
+  return (
+    capped +
+    jitter
+  );
+}
+
+// ============================================================================
+// Global cooldown setter
+// ============================================================================
+
+function activateGlobalCooldown(
+  delayMs
+) {
+  const cooldownUntil =
+    Date.now() +
+    Math.max(
+      0,
+      delayMs
+    );
+
+  globalCooldownUntil =
+    Math.max(
+      globalCooldownUntil,
+      cooldownUntil
+    );
 }
 
 // ============================================================================
@@ -1031,20 +1251,25 @@ async function fetchWithTimeout(
       url,
       {
         ...options,
+
         signal:
           controller.signal,
       }
     );
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(
+      timeout
+    );
   }
 }
 
 // ============================================================================
-// Read response body safely
+// Safely read response body
 // ============================================================================
 
-async function readResponseBody(response) {
+async function readResponseBody(
+  response
+) {
   try {
     return await response.text();
   } catch {
@@ -1053,31 +1278,66 @@ async function readResponseBody(response) {
 }
 
 // ============================================================================
-// Calculate exponential backoff
+// Rate-limit diagnostics
 // ============================================================================
 
-function calculateBackoff(attempt) {
-  const backoff =
-    Math.min(
-      MAX_BACKOFF_MS,
-      INITIAL_BACKOFF_MS *
-      Math.pow(
-        2,
-        attempt
-      )
-    );
+function logRateLimitDiagnostics(
+  response,
+  body
+) {
+  console.warn(
+    "[Tier 2] Groq rate-limit headers:",
+    {
+      retryAfter:
+        response.headers.get(
+          "retry-after"
+        ),
 
-  const jitter =
-    Math.floor(
-      Math.random() *
-      1000
-    );
+      limitRequests:
+        response.headers.get(
+          "x-ratelimit-limit-requests"
+        ),
 
-  return backoff + jitter;
+      remainingRequests:
+        response.headers.get(
+          "x-ratelimit-remaining-requests"
+        ),
+
+      resetRequests:
+        response.headers.get(
+          "x-ratelimit-reset-requests"
+        ),
+
+      limitTokens:
+        response.headers.get(
+          "x-ratelimit-limit-tokens"
+        ),
+
+      remainingTokens:
+        response.headers.get(
+          "x-ratelimit-remaining-tokens"
+        ),
+
+      resetTokens:
+        response.headers.get(
+          "x-ratelimit-reset-tokens"
+        ),
+    }
+  );
+
+  /*
+   * The response body is important for diagnosing
+   * OTPM / TPM / RPM-specific failures.
+   */
+
+  console.warn(
+    "[Tier 2] Groq 429 response body:",
+    body
+  );
 }
 
 // ============================================================================
-// Hosted model — ONE batch = ONE HTTP request
+// Hosted model — ONE batch = ONE request
 // ============================================================================
 //
 // IMPORTANT:
@@ -1086,25 +1346,22 @@ function calculateBackoff(attempt) {
 //
 // Chunking happens ONLY inside classifyTier2Batch().
 //
-// This prevents:
-//
-//   pipeline batch
-//        ↓
-//   classifyTier2Batch()
-//        ↓
-//   callHostedModelBatch()
-//
-// from accidentally creating a second layer of batching.
-//
 // ============================================================================
 
-async function callHostedModelBatch(posts) {
+async function callHostedModelBatch(
+  posts
+) {
 
   if (!GROQ_API_KEY) {
     throw new Error(
       "GROQ_API_KEY is not configured."
     );
   }
+
+  const messages =
+    buildMessages(
+      posts
+    );
 
   for (
     let attempt = 0;
@@ -1141,10 +1398,7 @@ async function callHostedModelBatch(posts) {
                 model:
                   GROQ_MODEL,
 
-                messages:
-                  buildMessages(
-                    posts
-                  ),
+                messages,
 
                 temperature:
                   0,
@@ -1197,6 +1451,10 @@ async function callHostedModelBatch(posts) {
           `in ${wait}ms.`
         );
 
+        activateGlobalCooldown(
+          wait
+        );
+
         await sleep(
           wait
         );
@@ -1229,16 +1487,14 @@ async function callHostedModelBatch(posts) {
         `in ${wait}ms.`
       );
 
+      activateGlobalCooldown(
+        wait
+      );
+
       await sleep(
         wait
       );
-    }
 
-    /*
-     * A network error that did not throw above means we should
-     * have a response. If not, continue defensively.
-     */
-    if (!response) {
       continue;
     }
 
@@ -1258,7 +1514,6 @@ async function callHostedModelBatch(posts) {
           await response.json();
 
       } catch {
-
         throw new Error(
           "Tier 2 returned invalid HTTP JSON."
         );
@@ -1267,9 +1522,27 @@ async function callHostedModelBatch(posts) {
       const choice =
         data?.choices?.[0];
 
+      if (!choice) {
+        throw new Error(
+          "Tier 2 response contained no model choice."
+        );
+      }
+
       const raw =
-        choice?.message
-          ?.content ?? "";
+        choice?.message?.content ??
+        "";
+
+      // ======================================================================
+      // Empty response
+      // ======================================================================
+
+      if (
+        !raw.trim()
+      ) {
+        throw new Error(
+          "Tier 2 returned an empty model response."
+        );
+      }
 
       // ======================================================================
       // Truncated output
@@ -1288,6 +1561,10 @@ async function callHostedModelBatch(posts) {
           "Tier 2 batch returned truncated JSON."
         );
       }
+
+      // ======================================================================
+      // Parse + validate
+      // ======================================================================
 
       const results =
         parseBatchResponse(
@@ -1310,10 +1587,10 @@ async function callHostedModelBatch(posts) {
     }
 
     // ========================================================================
-    // AUTHENTICATION
+    // 401 / 403
     // ========================================================================
     //
-    // 401 / 403 are permanent configuration/authentication failures.
+    // Permanent authentication/configuration errors.
     //
     // NEVER retry.
     //
@@ -1348,6 +1625,11 @@ async function callHostedModelBatch(posts) {
           response
         );
 
+      logRateLimitDiagnostics(
+        response,
+        body
+      );
+
       const retryAfter =
         getRetryAfterMs(
           response
@@ -1369,17 +1651,22 @@ async function callHostedModelBatch(posts) {
           1000
         );
 
+      /*
+       * Respect Retry-After when supplied.
+       *
+       * Otherwise use exponential backoff.
+       */
+
       const wait =
         Math.max(
           retryAfter ?? 0,
           exponentialBackoff
-        ) + jitter;
+        ) +
+        jitter;
 
-      globalCooldownUntil =
-        Math.max(
-          globalCooldownUntil,
-          Date.now() + wait
-        );
+      activateGlobalCooldown(
+        wait
+      );
 
       if (
         attempt >=
@@ -1388,7 +1675,8 @@ async function callHostedModelBatch(posts) {
 
         throw new Error(
           `Tier 2 rate limit persisted after ` +
-          `${MAX_RETRIES} retries. ${body}`
+          `${MAX_RETRIES} retries. ` +
+          `Groq response: ${body}`
         );
       }
 
@@ -1411,10 +1699,8 @@ async function callHostedModelBatch(posts) {
     // ========================================================================
 
     if (
-      response.status === 500 ||
-      response.status === 502 ||
-      response.status === 503 ||
-      response.status === 504
+      response.status >= 500 &&
+      response.status <= 599
     ) {
 
       const body =
@@ -1426,7 +1712,6 @@ async function callHostedModelBatch(posts) {
         attempt >=
         MAX_RETRIES
       ) {
-
         throw new Error(
           `Tier 2 server error persisted after retries: ` +
           `${response.status} ${body}`
@@ -1443,6 +1728,10 @@ async function callHostedModelBatch(posts) {
         `${response.status}. ` +
         `Retry ${attempt + 1}/${MAX_RETRIES} ` +
         `in ${wait}ms.`
+      );
+
+      activateGlobalCooldown(
+        wait
       );
 
       await sleep(
@@ -1510,7 +1799,7 @@ async function callHostedModelBatch(posts) {
 }
 
 // ============================================================================
-// Split posts into batches
+// Chunk posts
 // ============================================================================
 
 function chunkPosts(
@@ -1524,7 +1813,6 @@ function chunkPosts(
     i < posts.length;
     i += batchSize
   ) {
-
     batches.push(
       posts.slice(
         i,
@@ -1540,21 +1828,25 @@ function chunkPosts(
 // Public API — SINGLE
 // ============================================================================
 //
-// Compatibility wrapper.
+// Compatibility helper.
 //
-// This function does NOT perform its own HTTP request.
+// The existing pipeline can continue using:
 //
-// It delegates to the exact same batch implementation.
+//   classifyTier2(text)
+//
+// It internally uses the exact same batch implementation.
 //
 // ============================================================================
 
-export async function classifyTier2(text) {
-
+export async function classifyTier2(
+  text
+) {
   const results =
     await classifyTier2Batch([
       {
         id:
           "single",
+
         text,
       },
     ]);
@@ -1570,19 +1862,25 @@ export async function classifyTier2(text) {
 //
 // Example:
 //
-//   classifyTier2Batch(8 posts)
+//   8 uncertain posts
 //
-// with TIER2_BATCH_SIZE=5:
+// with:
 //
-//   5 posts → callHostedModelBatch()
-//   3 posts → callHostedModelBatch()
+//   TIER2_BATCH_SIZE=3
 //
-// Total:
-//   2 HTTP requests
+// becomes:
+//
+//   3 + 3 + 2
+//
+// Therefore:
+//
+//   3 Groq requests
 //
 // ============================================================================
 
-export async function classifyTier2Batch(posts) {
+export async function classifyTier2Batch(
+  posts
+) {
 
   // --------------------------------------------------------------------------
   // Normalize
@@ -1620,7 +1918,7 @@ export async function classifyTier2Batch(posts) {
   const allResults = [];
 
   // --------------------------------------------------------------------------
-  // Sequential batch execution
+  // Sequential execution
   // --------------------------------------------------------------------------
 
   for (
@@ -1655,7 +1953,8 @@ export async function classifyTier2Batch(posts) {
         batch.length
       ) {
         throw new Error(
-          `Tier 2 returned ${results?.length ?? 0} results ` +
+          `Tier 2 returned ` +
+          `${results?.length ?? 0} results ` +
           `for ${batch.length} posts.`
         );
       }
@@ -1670,27 +1969,26 @@ export async function classifyTier2Batch(posts) {
 
     } catch (error) {
 
-      /*
-       * IMPORTANT:
-       *
-       * Do NOT automatically call classifyTier2()
-       * here.
-       *
-       * That would turn one batch into multiple
-       * single-post requests and defeat batching.
-       */
-
       console.error(
-        `[Tier 2] Batch ${i + 1}/${batches.length} failed:`,
-        error?.message ?? error
+        `[Tier 2] Batch ${i + 1}/${batches.length} failed: ` +
+        `${error?.message ?? error}`
       );
+
+      /*
+       * Intentionally fail the entire Tier 2 call.
+       *
+       * We do NOT silently convert the failed batch
+       * into multiple single-post calls.
+       *
+       * This preserves the batching contract.
+       */
 
       throw error;
     }
   }
 
   // --------------------------------------------------------------------------
-  // Final sanity check
+  // Final count check
   // --------------------------------------------------------------------------
 
   if (
@@ -1702,6 +2000,37 @@ export async function classifyTier2Batch(posts) {
       `Expected ${normalized.length}, ` +
       `received ${allResults.length}.`
     );
+  }
+
+  // --------------------------------------------------------------------------
+  // Final ID validation
+  // --------------------------------------------------------------------------
+
+  const expectedIds =
+    normalized.map(
+      (post) => post.id
+    );
+
+  const actualIds =
+    allResults.map(
+      (result) => result.id
+    );
+
+  for (
+    let i = 0;
+    i < expectedIds.length;
+    i++
+  ) {
+    if (
+      expectedIds[i] !==
+      actualIds[i]
+    ) {
+      throw new Error(
+        `Tier 2 result ordering mismatch at index ${i}. ` +
+        `Expected ${expectedIds[i]}, ` +
+        `received ${actualIds[i]}.`
+      );
+    }
   }
 
   return allResults;
@@ -1724,14 +2053,19 @@ console.log(
 );
 
 console.log(
-  `  API key configured: ${Boolean(GROQ_API_KEY)}`
+  `  API key configured: ${Boolean(
+    GROQ_API_KEY
+  )}`
 );
 
 if (
   GROQ_API_KEY
 ) {
   console.log(
-    `  API key prefix: ${GROQ_API_KEY.slice(0, 8)}...`
+    `  API key prefix: ${GROQ_API_KEY.slice(
+      0,
+      8
+    )}...`
   );
 
   console.log(
@@ -1796,6 +2130,22 @@ console.log(
 );
 
 console.log(
+  "  Retry-After support: enabled"
+);
+
+console.log(
+  "  Exponential backoff + jitter: enabled"
+);
+
+console.log(
+  "  Rate-limit diagnostics: enabled"
+);
+
+console.log(
+  "  429 response-body diagnostics: enabled"
+);
+
+console.log(
   "  401/403 retry: disabled"
 );
 
@@ -1805,4 +2155,12 @@ console.log(
 
 console.log(
   "  Duplicate ID validation: enabled"
+);
+
+console.log(
+  "  Maximum emotions/post: 2"
+);
+
+console.log(
+  "  Canonical-data mutation: disabled"
 );
