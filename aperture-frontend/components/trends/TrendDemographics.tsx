@@ -8,30 +8,51 @@ export function TrendDemographics({ topic }: { topic: any }) {
   const [langsData, setLangsData] = useState<{ label: string; pct: number; c: string; stroke: string; dashoffset: number }[]>([]);
   const [cohorts, setCohorts] = useState<{ c: string; size: number; op: number }[]>([]);
   const [hoveredLang, setHoveredLang] = useState<string | null>(null);
-  const [mounted, setMounted] = useState(false);
+  const [isFilled, setIsFilled] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let fillTimer: NodeJS.Timeout | null = null;
+    const parentSection = containerRef.current?.closest("section");
+
+    const triggerFill = () => {
+      if (fillTimer) clearTimeout(fillTimer);
+      setIsFilled(false);
+      fillTimer = setTimeout(() => {
+        setIsFilled(true);
+      }, 220);
+    };
+
+    const resetFill = () => {
+      if (fillTimer) clearTimeout(fillTimer);
+      setIsFilled(false);
+    };
+
     const obs = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting) {
-        setMounted(true);
+      if (e.isIntersecting && !document.body.classList.contains("presentation-mode")) {
+        triggerFill();
       }
     }, { threshold: 0.1 });
     if (containerRef.current) obs.observe(containerRef.current);
 
-    const parentSection = containerRef.current?.closest("section");
     let mutObs: MutationObserver | null = null;
     if (parentSection) {
+      if (parentSection.classList.contains("active-slide")) {
+        triggerFill();
+      }
+
       mutObs = new MutationObserver(() => {
         if (parentSection.classList.contains("active-slide")) {
-          setMounted(false);
-          setTimeout(() => setMounted(true), 50);
+          triggerFill();
+        } else if (document.body.classList.contains("presentation-mode")) {
+          resetFill();
         }
       });
       mutObs.observe(parentSection, { attributes: true, attributeFilter: ["class"] });
     }
 
     return () => {
+      if (fillTimer) clearTimeout(fillTimer);
       obs.disconnect();
       if (mutObs) mutObs.disconnect();
     };
@@ -96,8 +117,13 @@ export function TrendDemographics({ topic }: { topic: any }) {
                 </div>
                 <div className="bg-[#f1f3f4] rounded-full w-full h-2 overflow-hidden">
                   <div 
-                    className="bg-[#1a73e8] rounded-full h-2 transition-all duration-1000 ease-out" 
-                    style={{ width: `${mounted ? d.pct : 0}%` }}
+                    className="bg-[#1a73e8] rounded-full h-2" 
+                    style={{ 
+                      width: isFilled ? `${d.pct}%` : '0%',
+                      transition: isFilled 
+                        ? `width 1.1s cubic-bezier(0.16, 1, 0.3, 1) ${i * 70}ms` 
+                        : 'none'
+                    }}
                   ></div>
                 </div>
               </div>
@@ -111,8 +137,8 @@ export function TrendDemographics({ topic }: { topic: any }) {
             <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
             Primary Language
           </h3>
-          <div className="flex items-center gap-8 mt-2">
-            <div className="relative w-32 h-32 shrink-0">
+          <div className="flex items-center justify-between gap-8 w-full my-auto">
+            <div className="relative w-32 h-32 shrink-0 lang-donut-container">
               <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
                 <circle cx="50" cy="50" r="40" fill="transparent" stroke="#f8f9fa" strokeWidth="12"></circle>
                 {langsData.map((d, i) => (
@@ -125,7 +151,7 @@ export function TrendDemographics({ topic }: { topic: any }) {
                     stroke={d.c}
                     strokeWidth={hoveredLang === d.label ? 16 : 12}
                     strokeDasharray={d.stroke}
-                    strokeDashoffset={mounted ? d.dashoffset : 251.327}
+                    strokeDashoffset={isFilled ? d.dashoffset : 251.327}
                     strokeLinecap="round"
                     opacity={hoveredLang && hoveredLang !== d.label ? 0.3 : 1}
                     className="donut-segment transition-all duration-1000 ease-out"
@@ -137,7 +163,7 @@ export function TrendDemographics({ topic }: { topic: any }) {
                 <span className="text-[10px] font-bold text-[#80868b] uppercase tracking-wider">{hoveredLang || maxLang?.label}</span>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-y-3 w-full max-w-[200px] ml-2">
+            <div className="grid grid-cols-1 gap-y-3 w-full max-w-[220px] sm:max-w-[240px] ml-auto">
               {langsData.map((d, i) => (
                 <div 
                   key={i} 

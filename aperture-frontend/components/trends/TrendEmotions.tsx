@@ -75,14 +75,14 @@ export function TrendEmotions({ topic }: { topic: any }) {
               <div className="grid grid-cols-5 gap-1.5 w-full mb-3">
                 {Array.from({ length: 20 }).map((_, k) => {
                   const isFilled = k < filled;
-                  const delay = (idx * 40) + (k * 15);
+                  const delay = 220 + (idx * 65) + (k * 22);
                   return (
                     <span
                       key={`${animKey}-${k}`}
                       className="w-full aspect-square rounded-[3px] waffle-sq"
                       style={{
                         background: isFilled ? e.c : '#f1f3f4',
-                        animation: isFilled ? `popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both` : 'none',
+                        animation: isFilled ? `popIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both` : 'none',
                       }}
                     />
                   );
