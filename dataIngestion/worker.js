@@ -45,6 +45,13 @@ const {
 } = require("./config");
 
 const { analyzeTrend } = require("./trendAnalysis");
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "sentiment/.env") });
+const HashtagSegmenter = require("./HashtagSegmenter");
+const segmenter = new HashtagSegmenter({
+  groqApiKey: process.env.GROQ_API_KEY_HASHTAG,
+  groqModel: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
+});
 
 const {
   googleTrendRegions,
@@ -58,13 +65,9 @@ const {
 
 const { analyzeNetwork } = require("./networkAnalysis");
 
-const {
-  generateForecast,
-} = require("./forecasting/index");
+const { generateForecast } = require("./forecasting/index");
 
-const {
-  generateTrendDescription,
-} = require("./groqClient");
+const { generateTrendDescription } = require("./groqClient");
 
 // ============================================================================
 // Configuration
@@ -72,11 +75,7 @@ const {
 
 const SUPPORTED_SCHEMA_VERSION = "1.0.0";
 
-const SUPPORTED_PLATFORMS = [
-  "x",
-  "reddit",
-  "telegram",
-];
+const SUPPORTED_PLATFORMS = ["x", "reddit", "telegram"];
 
 const SENTIMENT_CONCURRENCY = 1;
 
@@ -102,25 +101,18 @@ let analyzeBatch = null;
 async function loadSentimentPipeline() {
   console.log("[Startup] Loading sentiment pipeline...");
 
-  const sentimentPipeline = await import(
-    "./sentiment/src/pipeline.js"
-  );
+  const sentimentPipeline = await import("./sentiment/src/pipeline.js");
 
   if (
     !sentimentPipeline ||
     typeof sentimentPipeline.analyzeBatch !== "function"
   ) {
-    throw new Error(
-      "Sentiment pipeline does not export analyzeBatch().",
-    );
+    throw new Error("Sentiment pipeline does not export analyzeBatch().");
   }
 
-  analyzeBatch =
-    sentimentPipeline.analyzeBatch;
+  analyzeBatch = sentimentPipeline.analyzeBatch;
 
-  console.log(
-    "[Startup] Sentiment pipeline loaded successfully.",
-  );
+  console.log("[Startup] Sentiment pipeline loaded successfully.");
 }
 
 // ============================================================================
@@ -144,13 +136,8 @@ function error(worker, message) {
 // ============================================================================
 
 function getCanonicalData(job) {
-  if (
-    !job?.data ||
-    typeof job.data !== "object"
-  ) {
-    throw new Error(
-      "Job data is missing or invalid.",
-    );
+  if (!job?.data || typeof job.data !== "object") {
+    throw new Error("Job data is missing or invalid.");
   }
 
   /*
@@ -171,16 +158,11 @@ function getCanonicalData(job) {
    *
    *   job.data.canonical = canonical
    */
-  if (
-    job.data.canonical &&
-    typeof job.data.canonical === "object"
-  ) {
+  if (job.data.canonical && typeof job.data.canonical === "object") {
     return job.data.canonical;
   }
 
-  throw new Error(
-    "Canonical collection not found in job data.",
-  );
+  throw new Error("Canonical collection not found in job data.");
 }
 
 // ============================================================================
@@ -188,22 +170,14 @@ function getCanonicalData(job) {
 // ============================================================================
 
 function validateCanonicalData(data) {
-  if (
-    !data ||
-    typeof data !== "object"
-  ) {
-    throw new Error(
-      "Canonical data is missing or invalid.",
-    );
+  if (!data || typeof data !== "object") {
+    throw new Error("Canonical data is missing or invalid.");
   }
 
-  if (
-    data.schemaVersion !==
-    SUPPORTED_SCHEMA_VERSION
-  ) {
+  if (data.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
     throw new Error(
       `Unsupported schemaVersion '${data.schemaVersion}'. ` +
-      `Expected '${SUPPORTED_SCHEMA_VERSION}'.`,
+        `Expected '${SUPPORTED_SCHEMA_VERSION}'.`,
     );
   }
 
@@ -212,54 +186,33 @@ function validateCanonicalData(data) {
     typeof data.collection !== "object" ||
     !data.collection.collectionId
   ) {
-    throw new Error(
-      "Missing collection.collectionId.",
-    );
+    throw new Error("Missing collection.collectionId.");
   }
 
-  if (
-    !data.trend ||
-    typeof data.trend !== "object"
-  ) {
-    throw new Error(
-      "Missing canonical trend object.",
-    );
+  if (!data.trend || typeof data.trend !== "object") {
+    throw new Error("Missing canonical trend object.");
   }
 
   if (!Array.isArray(data.events)) {
-    throw new Error(
-      "Canonical events must be an array.",
-    );
+    throw new Error("Canonical events must be an array.");
   }
 
   if (
     data.authorProfiles !== undefined &&
     !Array.isArray(data.authorProfiles)
   ) {
-    throw new Error(
-      "Canonical authorProfiles must be an array.",
-    );
+    throw new Error("Canonical authorProfiles must be an array.");
   }
 
-  if (
-    data.communities !== undefined &&
-    !Array.isArray(data.communities)
-  ) {
-    throw new Error(
-      "Canonical communities must be an array.",
-    );
+  if (data.communities !== undefined && !Array.isArray(data.communities)) {
+    throw new Error("Canonical communities must be an array.");
   }
 
   if (
     data.platforms !== undefined &&
-    (
-      typeof data.platforms !== "object" ||
-      Array.isArray(data.platforms)
-    )
+    (typeof data.platforms !== "object" || Array.isArray(data.platforms))
   ) {
-    throw new Error(
-      "Canonical platforms must be an object.",
-    );
+    throw new Error("Canonical platforms must be an object.");
   }
 
   return true;
@@ -269,48 +222,31 @@ function validateEvents(events) {
   const eventIds = new Set();
 
   for (const event of events) {
-    if (
-      !event ||
-      typeof event !== "object"
-    ) {
-      throw new Error(
-        "Canonical events contain an invalid event.",
-      );
+    if (!event || typeof event !== "object") {
+      throw new Error("Canonical events contain an invalid event.");
     }
 
     if (!event.eventId) {
-      throw new Error(
-        "Canonical event is missing eventId.",
-      );
+      throw new Error("Canonical event is missing eventId.");
     }
 
     if (!event.platform) {
-      throw new Error(
-        `Event '${event.eventId}' is missing platform.`,
-      );
+      throw new Error(`Event '${event.eventId}' is missing platform.`);
     }
 
     if (!event.platformPostId) {
-      throw new Error(
-        `Event '${event.eventId}' is missing platformPostId.`,
-      );
+      throw new Error(`Event '${event.eventId}' is missing platformPostId.`);
     }
 
-    if (
-      !SUPPORTED_PLATFORMS.includes(
-        event.platform,
-      )
-    ) {
+    if (!SUPPORTED_PLATFORMS.includes(event.platform)) {
       throw new Error(
         `Unsupported platform '${event.platform}' ` +
-        `for event '${event.eventId}'.`,
+          `for event '${event.eventId}'.`,
       );
     }
 
     if (eventIds.has(event.eventId)) {
-      throw new Error(
-        `Duplicate eventId '${event.eventId}'.`,
-      );
+      throw new Error(`Duplicate eventId '${event.eventId}'.`);
     }
 
     eventIds.add(event.eventId);
@@ -324,19 +260,12 @@ function validateCollection(data) {
 
   validateEvents(data.events);
 
-  if (
-    data.quality &&
-    typeof data.quality.recordsCollected ===
-    "number"
-  ) {
-    if (
-      data.quality.recordsCollected !==
-      data.events.length
-    ) {
+  if (data.quality && typeof data.quality.recordsCollected === "number") {
+    if (data.quality.recordsCollected !== data.events.length) {
       throw new Error(
         `Collection accounting mismatch: ` +
-        `quality.recordsCollected=${data.quality.recordsCollected}, ` +
-        `events.length=${data.events.length}.`,
+          `quality.recordsCollected=${data.quality.recordsCollected}, ` +
+          `events.length=${data.events.length}.`,
       );
     }
   }
@@ -349,23 +278,15 @@ function validateCollection(data) {
 // ============================================================================
 
 function getTrendLabel(data) {
-  return (
-    data?.trend?.label ??
-    data?.trend?.query ??
-    "unknown"
-  );
+  return data?.trend?.label ?? data?.trend?.query ?? "unknown";
 }
 
 function getPlatformCounts(events) {
-  return events.reduce(
-    (counts, event) => {
-      counts[event.platform] =
-        (counts[event.platform] || 0) + 1;
+  return events.reduce((counts, event) => {
+    counts[event.platform] = (counts[event.platform] || 0) + 1;
 
-      return counts;
-    },
-    {},
-  );
+    return counts;
+  }, {});
 }
 
 // ============================================================================
@@ -379,30 +300,18 @@ function getPlatformCounts(events) {
  *
  * null / undefined / invalid / negative -> fallback
  */
-function toSafeInteger(
-  value,
-  fallback = 0,
-) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
+function toSafeInteger(value, fallback = 0) {
+  if (value === null || value === undefined || value === "") {
     return fallback;
   }
 
   if (typeof value === "bigint") {
-    return value >= 0n
-      ? value.toString()
-      : String(fallback);
+    return value >= 0n ? value.toString() : String(fallback);
   }
 
   const number = Number(value);
 
-  if (
-    !Number.isFinite(number) ||
-    number < 0
-  ) {
+  if (!Number.isFinite(number) || number < 0) {
     return fallback;
   }
 
@@ -412,23 +321,14 @@ function toSafeInteger(
 /**
  * Convert a value to a finite number.
  */
-function toSafeNumber(
-  value,
-  fallback = 0,
-) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
+function toSafeNumber(value, fallback = 0) {
+  if (value === null || value === undefined || value === "") {
     return fallback;
   }
 
   const number = Number(value);
 
-  return Number.isFinite(number)
-    ? number
-    : fallback;
+  return Number.isFinite(number) ? number : fallback;
 }
 
 /**
@@ -457,18 +357,11 @@ function cleanForJson(value) {
     return value.map(cleanForJson);
   }
 
-  if (
-    value &&
-    typeof value === "object"
-  ) {
+  if (value && typeof value === "object") {
     const result = {};
 
-    for (
-      const [key, child]
-      of Object.entries(value)
-    ) {
-      result[key] =
-        cleanForJson(child);
+    for (const [key, child] of Object.entries(value)) {
+      result[key] = cleanForJson(child);
     }
 
     return result;
@@ -478,11 +371,7 @@ function cleanForJson(value) {
 }
 
 function json(value) {
-  return JSON.stringify(
-    cleanForJson(
-      value ?? null,
-    ),
-  );
+  return JSON.stringify(cleanForJson(value ?? null));
 }
 
 // ============================================================================
@@ -494,11 +383,7 @@ function json(value) {
  *
  * node-postgres supports query_timeout on the query config.
  */
-async function queryWithTimeout(
-  text,
-  values = [],
-  timeoutMs = 10_000,
-) {
+async function queryWithTimeout(text, values = [], timeoutMs = 10_000) {
   if (shuttingDown) {
     throw new Error(
       "PostgreSQL query aborted because shutdown is in progress.",
@@ -526,70 +411,55 @@ async function ensurePostgresConnection() {
     return postgresConnectionPromise;
   }
 
-  const connectionAttempt =
-    (async () => {
-      let healthy = false;
+  const connectionAttempt = (async () => {
+    let healthy = false;
 
-      try {
-        healthy =
-          await checkPostgres();
-      } catch (err) {
-        if (shuttingDown) {
-          throw new Error(
-            "PostgreSQL connection check aborted because shutdown is in progress.",
-          );
-        }
-
-        log(
-          "Database",
-          `PostgreSQL health check failed: ${err.message}`,
-        );
-
-        healthy = false;
-      }
-
+    try {
+      healthy = await checkPostgres();
+    } catch (err) {
       if (shuttingDown) {
         throw new Error(
-          "PostgreSQL reconnect aborted because shutdown is in progress.",
+          "PostgreSQL connection check aborted because shutdown is in progress.",
         );
       }
 
-      if (healthy) {
-        return;
-      }
+      log("Database", `PostgreSQL health check failed: ${err.message}`);
 
-      log(
-        "Database",
-        "PostgreSQL connection stale — reconnecting...",
+      healthy = false;
+    }
+
+    if (shuttingDown) {
+      throw new Error(
+        "PostgreSQL reconnect aborted because shutdown is in progress.",
       );
+    }
 
-      if (shuttingDown) {
-        throw new Error(
-          "PostgreSQL reconnect aborted because shutdown is in progress.",
-        );
-      }
+    if (healthy) {
+      return;
+    }
 
-      await connectPostgres();
+    log("Database", "PostgreSQL connection stale — reconnecting...");
 
-      if (shuttingDown) {
-        throw new Error(
-          "PostgreSQL connection established during shutdown.",
-        );
-      }
-    })();
+    if (shuttingDown) {
+      throw new Error(
+        "PostgreSQL reconnect aborted because shutdown is in progress.",
+      );
+    }
 
-  postgresConnectionPromise =
-    connectionAttempt;
+    await connectPostgres();
+
+    if (shuttingDown) {
+      throw new Error("PostgreSQL connection established during shutdown.");
+    }
+  })();
+
+  postgresConnectionPromise = connectionAttempt;
 
   try {
     await connectionAttempt;
   } finally {
-    if (
-      postgresConnectionPromise ===
-      connectionAttempt
-    ) {
-      postgresConnectionPromise =
-        null;
+    if (postgresConnectionPromise === connectionAttempt) {
+      postgresConnectionPromise = null;
     }
   }
 }
@@ -606,10 +476,7 @@ function buildTrendKey(data) {
     data?.trend?.id ??
     getTrendLabel(data);
 
-  return String(raw)
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-");
+  return String(raw).trim().toLowerCase().replace(/\s+/g, "-");
 }
 
 // ============================================================================
@@ -628,9 +495,7 @@ function resolveCollectionTimestamp(data) {
   );
 }
 
-function resolveCollectionCompletedAt(
-  data,
-) {
+function resolveCollectionCompletedAt(data) {
   return (
     data?.collection?.completedAt ??
     data?.collection?.completed_at ??
@@ -648,9 +513,7 @@ function resolveCollectorVersion(data) {
   );
 }
 
-function resolveCollectionObservedAt(
-  data,
-) {
+function resolveCollectionObservedAt(data) {
   return (
     data?.collection?.observedAt ??
     data?.collection?.observed_at ??
@@ -658,87 +521,49 @@ function resolveCollectionObservedAt(
   );
 }
 
-function calculatePrimaryEventCount(
-  data,
-) {
+function calculatePrimaryEventCount(data) {
   return data.events.length;
 }
 
-function calculateRelationshipCount(
-  data,
-) {
+function calculateRelationshipCount(data) {
   let count = 0;
 
-  const platforms =
-    data?.platforms ?? {};
+  const platforms = data?.platforms ?? {};
 
-  for (
-    const platformData
-    of Object.values(platforms)
-  ) {
+  for (const platformData of Object.values(platforms)) {
     count += Number(
-      platformData?.pagination
-        ?.relationshipRecordsCollected ??
-      0,
+      platformData?.pagination?.relationshipRecordsCollected ?? 0,
     );
   }
 
-  return Number.isFinite(count)
-    ? count
-    : 0;
+  return Number.isFinite(count) ? count : 0;
 }
 
 function resolvePlatformStatus(data) {
-  if (
-    data?.platforms &&
-    typeof data.platforms === "object"
-  ) {
+  if (data?.platforms && typeof data.platforms === "object") {
     return data.platforms;
   }
 
   return {};
 }
 
-function resolveCollectionQuality(
-  data,
-) {
+function resolveCollectionQuality(data) {
   return data?.quality ?? {};
 }
 
-function resolveCollectionDiagnostics(
-  data,
-) {
+function resolveCollectionDiagnostics(data) {
   const diagnostics = {};
 
-  if (
-    data?.diagnostics !== undefined
-  ) {
-    diagnostics.collection =
-      data.diagnostics;
+  if (data?.diagnostics !== undefined) {
+    diagnostics.collection = data.diagnostics;
   }
 
-  if (
-    data?.platforms &&
-    typeof data.platforms === "object"
-  ) {
+  if (data?.platforms && typeof data.platforms === "object") {
     diagnostics.platforms = {};
 
-    for (
-      const [
-        platform,
-        platformData,
-      ] of Object.entries(
-        data.platforms,
-      )
-    ) {
-      if (
-        platformData?.diagnostics !==
-        undefined
-      ) {
-        diagnostics.platforms[
-          platform
-        ] =
-          platformData.diagnostics;
+    for (const [platform, platformData] of Object.entries(data.platforms)) {
+      if (platformData?.diagnostics !== undefined) {
+        diagnostics.platforms[platform] = platformData.diagnostics;
       }
     }
   }
@@ -760,106 +585,63 @@ function extractEventAuthorId(event) {
 }
 
 function extractEventText(event) {
-  return (
-    event?.content?.text ??
-    null
-  );
+  return event?.content?.text ?? null;
 }
 
-function extractContentFingerprint(
-  event,
-) {
+function extractContentFingerprint(event) {
   return (
-    event?.content
-      ?.contentFingerprint ??
-    event?.contentFingerprint ??
-    null
+    event?.content?.contentFingerprint ?? event?.contentFingerprint ?? null
   );
 }
 
 function extractPublishedAt(event) {
-  return (
-    event?.time?.publishedAt ??
-    null
-  );
+  return event?.time?.publishedAt ?? null;
 }
 
 function extractObservedAt(event) {
-  return (
-    event?.time?.observedAt ??
-    new Date().toISOString()
-  );
+  return event?.time?.observedAt ?? new Date().toISOString();
 }
 
 function extractEditedAt(event) {
-  return (
-    event?.time?.editedAt ??
-    null
-  );
+  return event?.time?.editedAt ?? null;
 }
 
 function extractTitle(event) {
-  return (
-    event?.content?.title ??
-    null
-  );
+  return event?.content?.title ?? null;
 }
 
 function extractLanguage(event) {
-  return (
-    event?.content?.language ??
-    null
-  );
+  return event?.content?.language ?? null;
 }
 
 function extractDetectedLanguage(event) {
   return (
-    event?.content?.detectedLang ??
-    event?.content?.detectedLanguage ??
-    null
+    event?.content?.detectedLang ?? event?.content?.detectedLanguage ?? null
   );
 }
 
-function extractLanguageConfidence(
-  event,
-) {
+function extractLanguageConfidence(event) {
   return (
-    event?.content
-      ?.languageDetectionConfidence ??
-    event?.content
-      ?.languageDetectConfidence ??
+    event?.content?.languageDetectionConfidence ??
+    event?.content?.languageDetectConfidence ??
     null
   );
 }
 
 function extractHashtags(event) {
-  return Array.isArray(
-    event?.content?.hashtags,
-  )
-    ? event.content.hashtags
-    : [];
+  return Array.isArray(event?.content?.hashtags) ? event.content.hashtags : [];
 }
 
 function extractMentions(event) {
-  return Array.isArray(
-    event?.content?.mentions,
-  )
-    ? event.content.mentions
-    : [];
+  return Array.isArray(event?.content?.mentions) ? event.content.mentions : [];
 }
 
 function extractUrls(event) {
-  return Array.isArray(
-    event?.content?.urls,
-  )
-    ? event.content.urls
-    : [];
+  return Array.isArray(event?.content?.urls) ? event.content.urls : [];
 }
 
 function extractAttachments(event) {
-  return Array.isArray(
-    event?.content?.attachments,
-  )
+  return Array.isArray(event?.content?.attachments)
     ? event.content.attachments
     : [];
 }
@@ -868,9 +650,7 @@ function extractAttachments(event) {
 // SNAPSHOT METRICS
 // ============================================================================
 
-function calculateSnapshotMetrics(
-  events,
-) {
+function calculateSnapshotMetrics(events) {
   let likes = 0;
   let replies = 0;
   let reposts = 0;
@@ -882,102 +662,64 @@ function calculateSnapshotMetrics(
   let latestEventAt = null;
 
   for (const event of events) {
-    const authorId =
-      extractEventAuthorId(event);
+    const authorId = extractEventAuthorId(event);
 
     if (authorId) {
-      authors.add(
-        `${event.platform}:${authorId}`,
-      );
+      authors.add(`${event.platform}:${authorId}`);
     }
 
-    const engagement =
-      event?.engagement ?? {};
+    const engagement = event?.engagement ?? {};
 
-    const platformData =
-      event?.platformData ?? {};
+    const platformData = event?.platformData ?? {};
 
     /*
      * Reddit may provide score instead of likes.
      */
     const rawLikes =
       engagement.likes ??
-      (
-        event.platform === "reddit"
-          ? platformData.score
-          : null
-      ) ??
+      (event.platform === "reddit" ? platformData.score : null) ??
       event?.metrics?.likes ??
       0;
 
-    likes += toSafeNumber(
-      rawLikes,
-      0,
-    );
+    likes += toSafeNumber(rawLikes, 0);
 
     replies += toSafeNumber(
-      engagement.replies ??
-      event?.metrics?.comments ??
-      0,
+      engagement.replies ?? event?.metrics?.comments ?? 0,
       0,
     );
 
     reposts += toSafeNumber(
-      engagement.reposts ??
-      event?.metrics?.shares ??
-      0,
+      engagement.reposts ?? event?.metrics?.shares ?? 0,
       0,
     );
 
-    quotes += toSafeNumber(
-      engagement.quotes ??
-      0,
-      0,
-    );
+    quotes += toSafeNumber(engagement.quotes ?? 0, 0);
 
-    reach += toSafeNumber(
-      engagement.views ??
-      event?.metrics?.views ??
-      0,
-      0,
-    );
+    reach += toSafeNumber(engagement.views ?? event?.metrics?.views ?? 0, 0);
 
-    const publishedAt =
-      extractPublishedAt(event);
+    const publishedAt = extractPublishedAt(event);
 
     if (publishedAt) {
-      if (
-        !latestEventAt ||
-        new Date(publishedAt) >
-        new Date(latestEventAt)
-      ) {
-        latestEventAt =
-          publishedAt;
+      if (!latestEventAt || new Date(publishedAt) > new Date(latestEventAt)) {
+        latestEventAt = publishedAt;
       }
     }
   }
 
   return {
-    postCount:
-      events.length,
+    postCount: events.length,
 
-    uniqueAuthors:
-      authors.size,
+    uniqueAuthors: authors.size,
 
-    likes:
-      toSafeNumber(likes),
+    likes: toSafeNumber(likes),
 
-    replies:
-      toSafeNumber(replies),
+    replies: toSafeNumber(replies),
 
-    reposts:
-      toSafeNumber(reposts),
+    reposts: toSafeNumber(reposts),
 
-    quotes:
-      toSafeNumber(quotes),
+    quotes: toSafeNumber(quotes),
 
-    reach:
-      toSafeNumber(reach),
+    reach: toSafeNumber(reach),
 
     latestEventAt,
   };
@@ -988,14 +730,11 @@ function calculateSnapshotMetrics(
 // ============================================================================
 
 async function upsertTrend(data) {
-  const trendKey =
-    buildTrendKey(data);
+  const trendKey = buildTrendKey(data);
 
-  const label =
-    getTrendLabel(data);
+  const label = getTrendLabel(data);
 
-  const observedAt =
-    resolveCollectionObservedAt(data);
+  const observedAt = resolveCollectionObservedAt(data);
 
   const query = `
     INSERT INTO trends (
@@ -1045,20 +784,10 @@ async function upsertTrend(data) {
       status
   `;
 
-  const result =
-    await queryWithTimeout(
-      query,
-      [
-        trendKey,
-        label,
-        observedAt,
-      ],
-    );
+  const result = await queryWithTimeout(query, [trendKey, label, observedAt]);
 
   if (!result.rows[0]) {
-    throw new Error(
-      `Failed to create or resolve trend '${label}'.`,
-    );
+    throw new Error(`Failed to create or resolve trend '${label}'.`);
   }
 
   return result.rows[0];
@@ -1068,9 +797,7 @@ async function upsertTrend(data) {
 // COLLECTION PERSISTENCE
 // ============================================================================
 
-async function getNextCollectionSequence(
-  trendId,
-) {
+async function getNextCollectionSequence(trendId) {
   await queryWithTimeout(
     `
       SELECT pg_advisory_xact_lock(
@@ -1080,9 +807,8 @@ async function getNextCollectionSequence(
     [String(trendId)],
   );
 
-  const result =
-    await queryWithTimeout(
-      `
+  const result = await queryWithTimeout(
+    `
         SELECT
           COALESCE(
             MAX(collection_sequence),
@@ -1091,23 +817,15 @@ async function getNextCollectionSequence(
         FROM collections
         WHERE trend_id = $1
       `,
-      [trendId],
-    );
-
-  return Number(
-    result.rows[0]?.next_sequence ?? 1,
+    [trendId],
   );
+
+  return Number(result.rows[0]?.next_sequence ?? 1);
 }
 
-async function createCollection(
-  data,
-  trend,
-  runId,
-) {
+async function createCollection(data, trend, runId) {
   if (!runId) {
-    throw new Error(
-      "Cannot create collection without runId.",
-    );
+    throw new Error("Cannot create collection without runId.");
   }
 
   const existingQuery = `
@@ -1133,73 +851,52 @@ async function createCollection(
     LIMIT 1
   `;
 
-  const existingResult =
-    await queryWithTimeout(
-      existingQuery,
-      [runId],
-    );
+  const existingResult = await queryWithTimeout(existingQuery, [runId]);
 
   if (existingResult.rows[0]) {
-    const existing =
-      existingResult.rows[0];
+    const existing = existingResult.rows[0];
 
-    if (
-      String(existing.trend_id) !==
-      String(trend.id)
-    ) {
+    if (String(existing.trend_id) !== String(trend.id)) {
       throw new Error(
         `Collection '${runId}' already belongs to ` +
-        `trend '${existing.trend_id}', ` +
-        `but current trend is '${trend.id}'.`,
+          `trend '${existing.trend_id}', ` +
+          `but current trend is '${trend.id}'.`,
       );
     }
 
     log(
       "Database",
       `Collection already exists | ` +
-      `id=${existing.id} | ` +
-      `external=${existing.external_collection_id} | ` +
-      `sequence=#${existing.collection_sequence} | ` +
-      `status=${existing.status}`,
+        `id=${existing.id} | ` +
+        `external=${existing.external_collection_id} | ` +
+        `sequence=#${existing.collection_sequence} | ` +
+        `status=${existing.status}`,
     );
 
     return existing;
   }
 
-  const sequence =
-    await getNextCollectionSequence(
-      trend.id,
-    );
+  const sequence = await getNextCollectionSequence(trend.id);
 
-  const startedAt =
-    resolveCollectionTimestamp(data);
+  const startedAt = resolveCollectionTimestamp(data);
 
-  const completedAt =
-    resolveCollectionCompletedAt(data);
+  const completedAt = resolveCollectionCompletedAt(data);
 
-  const observedAt =
-    resolveCollectionObservedAt(data);
+  const observedAt = resolveCollectionObservedAt(data);
 
-  const collectorVersion =
-    resolveCollectorVersion(data);
+  const collectorVersion = resolveCollectorVersion(data);
 
-  const eventCount =
-    data.events.length;
+  const eventCount = data.events.length;
 
-  const primaryEventCount =
-    calculatePrimaryEventCount(data);
+  const primaryEventCount = calculatePrimaryEventCount(data);
 
-  const relationshipCount =
-    calculateRelationshipCount(data);
+  const relationshipCount = calculateRelationshipCount(data);
 
-  const quality =
-    resolveCollectionQuality(data);
+  const quality = resolveCollectionQuality(data);
 
-  const platformStatus =
-    resolvePlatformStatus(data);
+  const platformStatus = resolvePlatformStatus(data);
 
-  const diagnostics =
-    resolveCollectionDiagnostics(data);
+  const diagnostics = resolveCollectionDiagnostics(data);
 
   const insertQuery = `
     INSERT INTO collections (
@@ -1259,35 +956,27 @@ async function createCollection(
       created_at
   `;
 
-  const result =
-    await queryWithTimeout(
-      insertQuery,
-      [
-        trend.id,
-        runId,
-        sequence,
-        startedAt,
-        completedAt,
-        observedAt,
-        collectorVersion,
-        eventCount,
-        primaryEventCount,
-        relationshipCount,
-        json(quality),
-        json(platformStatus),
-        json(diagnostics),
-      ],
-    );
+  const result = await queryWithTimeout(insertQuery, [
+    trend.id,
+    runId,
+    sequence,
+    startedAt,
+    completedAt,
+    observedAt,
+    collectorVersion,
+    eventCount,
+    primaryEventCount,
+    relationshipCount,
+    json(quality),
+    json(platformStatus),
+    json(diagnostics),
+  ]);
 
   if (result.rows[0]) {
     return result.rows[0];
   }
 
-  const concurrentResult =
-    await queryWithTimeout(
-      existingQuery,
-      [runId],
-    );
+  const concurrentResult = await queryWithTimeout(existingQuery, [runId]);
 
   if (!concurrentResult.rows[0]) {
     throw new Error(
@@ -1295,16 +984,10 @@ async function createCollection(
     );
   }
 
-  const concurrent =
-    concurrentResult.rows[0];
+  const concurrent = concurrentResult.rows[0];
 
-  if (
-    String(concurrent.trend_id) !==
-    String(trend.id)
-  ) {
-    throw new Error(
-      `Collection '${runId}' belongs to a different trend.`,
-    );
+  if (String(concurrent.trend_id) !== String(trend.id)) {
+    throw new Error(`Collection '${runId}' belongs to a different trend.`);
   }
 
   return concurrent;
@@ -1315,78 +998,52 @@ async function createCollection(
 // ============================================================================
 
 async function upsertAuthor(event) {
-  const authorId =
-    extractEventAuthorId(event);
+  const authorId = extractEventAuthorId(event);
 
   if (!authorId) {
     return null;
   }
 
-  const platform =
-    event.platform;
+  const platform = event.platform;
 
-  const handle =
-    event?.author?.authorHandle ??
-    event?.author?.username ??
-    null;
+  const handle = event?.author?.authorHandle ?? event?.author?.username ?? null;
 
-  const displayName =
-    event?.author?.authorName ??
-    event?.author?.name ??
-    null;
+  const displayName = event?.author?.authorName ?? event?.author?.name ?? null;
 
-  const bio =
-    event?.author?.authorBio ??
-    event?.author?.bio ??
-    null;
+  const bio = event?.author?.authorBio ?? event?.author?.bio ?? null;
 
   const location =
-    event?.author?.authorLocation ??
-    event?.author?.location ??
-    null;
+    event?.author?.authorLocation ?? event?.author?.location ?? null;
 
   const region =
-    event?.author?.region ??
-    event?.author?.profile?.region ??
-    null;
+    event?.author?.region ?? event?.author?.profile?.region ?? null;
 
   const followerCount =
-    event?.platformData
-      ?.authorFollowers ??
-    event?.author?.profile
-      ?.followers ??
+    event?.platformData?.authorFollowers ??
+    event?.author?.profile?.followers ??
     event?.author?.followers ??
     null;
 
   const verified =
-    event?.platformData
-      ?.authorVerified ??
-    event?.author?.profile
-      ?.verified ??
+    event?.platformData?.authorVerified ??
+    event?.author?.profile?.verified ??
     event?.author?.verified ??
     null;
 
-  const platformData =
-    event?.platformData ??
-    null;
+  const platformData = event?.platformData ?? null;
 
   const profileImageUrl =
     event?.author?.profileImageUrl ??
-    event?.author?.profile
-      ?.imageUrl ??
-    event?.author?.profile
-      ?.profileImageUrl ??
+    event?.author?.profile?.imageUrl ??
+    event?.author?.profile?.profileImageUrl ??
     null;
 
   const profileUrl =
-    event?.author?.profileUrl ??
-    event?.author?.profile?.url ??
-    null;
+    event?.author?.profileUrl ?? event?.author?.profile?.url ?? null;
 
   const accountCreatedAt =
     event?.author?.accountCreatedAt ??
-    event?.author?.profile
-      ?.createdAt ??
+    event?.author?.profile?.createdAt ??
     null;
 
   const query = `
@@ -1508,25 +1165,21 @@ async function upsertAuthor(event) {
     RETURNING id
   `;
 
-  const result =
-    await queryWithTimeout(
-      query,
-      [
-        platform,
-        String(authorId),
-        handle,
-        displayName,
-        bio,
-        location,
-        region,
-        followerCount,
-        verified,
-        accountCreatedAt,
-        profileImageUrl,
-        profileUrl,
-        json(platformData),
-      ],
-    );
+  const result = await queryWithTimeout(query, [
+    platform,
+    String(authorId),
+    handle,
+    displayName,
+    bio,
+    location,
+    region,
+    followerCount,
+    verified,
+    accountCreatedAt,
+    profileImageUrl,
+    profileUrl,
+    json(platformData),
+  ]);
 
   return result.rows[0]?.id ?? null;
 }
@@ -1535,57 +1188,36 @@ async function upsertAuthor(event) {
 // EVENT PERSISTENCE
 // ============================================================================
 
-async function upsertEvent(
-  event,
-  collectionId,
-) {
-  if (
-    !event ||
-    typeof event !== "object"
-  ) {
-    throw new Error(
-      "Cannot persist invalid event.",
-    );
+async function upsertEvent(event, collectionId) {
+  if (!event || typeof event !== "object") {
+    throw new Error("Cannot persist invalid event.");
   }
 
   if (!event.eventId) {
-    throw new Error(
-      "Cannot persist event without eventId.",
-    );
+    throw new Error("Cannot persist event without eventId.");
   }
 
   if (!event.platform) {
-    throw new Error(
-      `Event '${event.eventId}' is missing platform.`,
-    );
+    throw new Error(`Event '${event.eventId}' is missing platform.`);
   }
 
   if (!event.platformPostId) {
-    throw new Error(
-      `Event '${event.eventId}' is missing platformPostId.`,
-    );
+    throw new Error(`Event '${event.eventId}' is missing platformPostId.`);
   }
 
-  const authorDbId =
-    await upsertAuthor(event);
+  const authorDbId = await upsertAuthor(event);
 
-  const engagement =
-    event?.engagement ?? {};
+  const engagement = event?.engagement ?? {};
 
-  const relationships =
-    event?.relationships ?? {};
+  const relationships = event?.relationships ?? {};
 
-  const platformData =
-    event?.platformData ?? {};
+  const platformData = event?.platformData ?? {};
 
-  const source =
-    event?.source ?? {};
+  const source = event?.source ?? {};
 
-  const retrieval =
-    event?.retrieval ?? {};
+  const retrieval = event?.retrieval ?? {};
 
-  const rawSource =
-    event?.rawSource ?? null;
+  const rawSource = event?.rawSource ?? null;
 
   // --------------------------------------------------------------------------
   // Required engagement fields
@@ -1601,80 +1233,46 @@ async function upsertEvent(
    */
   const rawLikes =
     engagement.likes ??
-    (
-      event.platform === "reddit"
-        ? platformData.score
-        : null
-    ) ??
+    (event.platform === "reddit" ? platformData.score : null) ??
     event?.metrics?.likes ??
     0;
 
-  const likes =
-    toSafeInteger(
-      rawLikes,
-      0,
-    );
+  const likes = toSafeInteger(rawLikes, 0);
 
-  const replies =
-    toSafeInteger(
-      engagement.replies ??
-      event?.metrics?.comments ??
-      0,
-      0,
-    );
+  const replies = toSafeInteger(
+    engagement.replies ?? event?.metrics?.comments ?? 0,
+    0,
+  );
 
-  const reposts =
-    toSafeInteger(
-      engagement.reposts ??
-      event?.metrics?.shares ??
-      0,
-      0,
-    );
+  const reposts = toSafeInteger(
+    engagement.reposts ?? event?.metrics?.shares ?? 0,
+    0,
+  );
 
-  const quotes =
-    toSafeInteger(
-      engagement.quotes ??
-      0,
-      0,
-    );
+  const quotes = toSafeInteger(engagement.quotes ?? 0, 0);
 
-  const views =
-    toSafeInteger(
-      engagement.views ??
-      event?.metrics?.views ??
-      0,
-      0,
-    );
+  const views = toSafeInteger(
+    engagement.views ?? event?.metrics?.views ?? 0,
+    0,
+  );
 
   // --------------------------------------------------------------------------
   // Nullable engagement fields
   // --------------------------------------------------------------------------
 
   const bookmarks =
-    engagement.bookmarks ===
-      null ||
-      engagement.bookmarks ===
-      undefined ||
-      engagement.bookmarks ===
-      ""
+    engagement.bookmarks === null ||
+    engagement.bookmarks === undefined ||
+    engagement.bookmarks === ""
       ? null
-      : toSafeInteger(
-        engagement.bookmarks,
-        null,
-      );
+      : toSafeInteger(engagement.bookmarks, null);
 
   const impressions =
-    engagement.impressions ===
-      null ||
-      engagement.impressions ===
-      undefined ||
-      engagement.impressions ===
-      ""
+    engagement.impressions === null ||
+    engagement.impressions === undefined ||
+    engagement.impressions === ""
       ? null
-      : toSafeInteger(
-        engagement.impressions,
-        null,
-      );
+      : toSafeInteger(engagement.impressions, null);
 
   // --------------------------------------------------------------------------
   // Final defensive validation
@@ -1688,34 +1286,20 @@ async function upsertEvent(
     views,
   };
 
-  for (
-    const [
-      metric,
-      value,
-    ] of Object.entries(
-      requiredMetrics,
-    )
-  ) {
-    if (
-      value === null ||
-      value === undefined
-    ) {
+  for (const [metric, value] of Object.entries(requiredMetrics)) {
+    if (value === null || value === undefined) {
       throw new Error(
         `Required engagement metric '${metric}' ` +
-        `resolved to NULL for event '${event.eventId}'.`,
+          `resolved to NULL for event '${event.eventId}'.`,
       );
     }
 
-    const numeric =
-      Number(value);
+    const numeric = Number(value);
 
-    if (
-      !Number.isFinite(numeric) ||
-      numeric < 0
-    ) {
+    if (!Number.isFinite(numeric) || numeric < 0) {
       throw new Error(
         `Required engagement metric '${metric}' ` +
-        `is invalid for event '${event.eventId}': ${String(value)}`,
+          `is invalid for event '${event.eventId}': ${String(value)}`,
       );
     }
   }
@@ -1723,13 +1307,13 @@ async function upsertEvent(
   log(
     "Database",
     `Event engagement normalized | ` +
-    `event=${event.eventId} | ` +
-    `platform=${event.platform} | ` +
-    `likes=${likes} | ` +
-    `replies=${replies} | ` +
-    `reposts=${reposts} | ` +
-    `quotes=${quotes} | ` +
-    `views=${views}`,
+      `event=${event.eventId} | ` +
+      `platform=${event.platform} | ` +
+      `likes=${likes} | ` +
+      `replies=${replies} | ` +
+      `reposts=${reposts} | ` +
+      `quotes=${quotes} | ` +
+      `views=${views}`,
   );
 
   // --------------------------------------------------------------------------
@@ -2050,25 +1634,15 @@ async function upsertEvent(
     bookmarks,
     views,
     impressions,
-    relationships.replyToId ??
-    null,
-    relationships.replyToAuthorId ??
-    null,
-    relationships.quoteOfId ??
-    null,
-    relationships.forwardOfId ??
-    relationships.crosspostOfId ??
-    null,
-    relationships.conversationId ??
-    null,
-    platformData.possiblySensitive ??
-    null,
-    platformData.isEdited ??
-    null,
-    platformData.authorFollowers ??
-    null,
-    platformData.authorVerified ??
-    null,
+    relationships.replyToId ?? null,
+    relationships.replyToAuthorId ?? null,
+    relationships.quoteOfId ?? null,
+    relationships.forwardOfId ?? relationships.crosspostOfId ?? null,
+    relationships.conversationId ?? null,
+    platformData.possiblySensitive ?? null,
+    platformData.isEdited ?? null,
+    platformData.authorFollowers ?? null,
+    platformData.authorVerified ?? null,
     json(event),
     json(source),
     json(retrieval),
@@ -2076,46 +1650,29 @@ async function upsertEvent(
     json(platformData),
   ];
 
-  const result =
-    await queryWithTimeout(
-      query,
-      values,
-    );
+  const result = await queryWithTimeout(query, values);
 
   if (!result.rows[0]) {
-    throw new Error(
-      `Failed to persist event '${event.eventId}'.`,
-    );
+    throw new Error(`Failed to persist event '${event.eventId}'.`);
   }
 
   return result.rows[0].id;
 }
 
-async function persistEvents(
-  data,
-  collectionId,
-) {
+async function persistEvents(data, collectionId) {
   const persistedEvents = [];
 
   for (const event of data.events) {
-    const eventDbId =
-      await upsertEvent(
-        event,
-        collectionId,
-      );
+    const eventDbId = await upsertEvent(event, collectionId);
 
     persistedEvents.push({
-      eventId:
-        event.eventId,
+      eventId: event.eventId,
 
-      databaseId:
-        eventDbId,
+      databaseId: eventDbId,
 
-      platform:
-        event.platform,
+      platform: event.platform,
 
-      platformPostId:
-        event.platformPostId,
+      platformPostId: event.platformPostId,
     });
   }
 
@@ -2126,11 +1683,7 @@ async function persistEvents(
 // TREND EVENT LINKS
 // ============================================================================
 
-async function persistTrendEvent(
-  trendId,
-  eventDbId,
-  collectionId,
-) {
+async function persistTrendEvent(trendId, eventDbId, collectionId) {
   const query = `
     INSERT INTO trend_events (
       trend_id,
@@ -2151,30 +1704,12 @@ async function persistTrendEvent(
     DO NOTHING
   `;
 
-  await queryWithTimeout(
-    query,
-    [
-      trendId,
-      eventDbId,
-      collectionId,
-    ],
-  );
+  await queryWithTimeout(query, [trendId, eventDbId, collectionId]);
 }
 
-async function persistTrendEvents(
-  trendId,
-  collectionId,
-  persistedEvents,
-) {
-  for (
-    const event
-    of persistedEvents
-  ) {
-    await persistTrendEvent(
-      trendId,
-      event.databaseId,
-      collectionId,
-    );
+async function persistTrendEvents(trendId, collectionId, persistedEvents) {
+  for (const event of persistedEvents) {
+    await persistTrendEvent(trendId, event.databaseId, collectionId);
   }
 }
 
@@ -2182,40 +1717,20 @@ async function persistTrendEvents(
 // TREND SNAPSHOT
 // ============================================================================
 
-async function createTrendSnapshot(
-  data,
-  trend,
-  collection,
-  analytics,
-) {
-  const metrics =
-    calculateSnapshotMetrics(
-      data.events,
-    );
+async function createTrendSnapshot(data, trend, collection, analytics) {
+  const metrics = calculateSnapshotMetrics(data.events);
 
-  const trendAnalytics =
-    analytics.trend ?? {};
+  const trendAnalytics = analytics.trend ?? {};
 
   const rank =
-    trendAnalytics
-      ?.globalRanking
-      ?.leaderboardPosition ??
-    trendAnalytics
-      ?.globalRanking
-      ?.rank ??
+    trendAnalytics?.globalRanking?.leaderboardPosition ??
+    trendAnalytics?.globalRanking?.rank ??
     null;
 
-  const score =
-    trendAnalytics?.trendScore ??
-    trendAnalytics?.score ??
-    null;
+  const score = trendAnalytics?.trendScore ?? trendAnalytics?.score ?? null;
 
   const tier =
-    trendAnalytics
-      ?.influence
-      ?.viralityTier ??
-    trendAnalytics?.tier ??
-    null;
+    trendAnalytics?.influence?.viralityTier ?? trendAnalytics?.tier ?? null;
 
   const capturedAt =
     collection.observed_at ??
@@ -2302,36 +1817,29 @@ async function createTrendSnapshot(
     RETURNING id
   `;
 
-  const result =
-    await queryWithTimeout(
-      query,
-      [
-        trend.id,
-        collection.id,
-        capturedAt,
-        rank,
-        score,
-        tier,
-        metrics.postCount,
-        metrics.uniqueAuthors,
-        metrics.likes,
-        metrics.replies,
-        metrics.reposts,
-        metrics.quotes,
-        metrics.reach,
-        metrics.latestEventAt,
-      ],
-    );
+  const result = await queryWithTimeout(query, [
+    trend.id,
+    collection.id,
+    capturedAt,
+    rank,
+    score,
+    tier,
+    metrics.postCount,
+    metrics.uniqueAuthors,
+    metrics.likes,
+    metrics.replies,
+    metrics.reposts,
+    metrics.quotes,
+    metrics.reach,
+    metrics.latestEventAt,
+  ]);
 
   if (!result.rows[0]) {
-    throw new Error(
-      `Failed to create trend snapshot for trend '${trend.id}'.`,
-    );
+    throw new Error(`Failed to create trend snapshot for trend '${trend.id}'.`);
   }
 
   return {
-    id:
-      result.rows[0].id,
+    id: result.rows[0].id,
 
     metrics,
   };
@@ -2348,10 +1856,7 @@ async function createTrendSnapshot(
  *
  * Analytics are persisted into their dedicated snapshot tables.
  */
-async function persistAnalyticsSnapshot(
-  snapshotId,
-  analytics,
-) {
+async function persistAnalyticsSnapshot(snapshotId, analytics) {
   return;
 }
 
@@ -2359,76 +1864,32 @@ async function persistAnalyticsSnapshot(
 // SENTIMENT SNAPSHOT
 // ============================================================================
 
-async function persistSentimentSnapshot(
-  snapshotId,
-  sentiment,
-) {
+async function persistSentimentSnapshot(snapshotId, sentiment) {
   if (!sentiment) {
     return;
   }
 
-  const positive =
-    Number(
-      sentiment?.summary?.positive ??
-      0,
-    );
+  const positive = Number(sentiment?.summary?.positive ?? 0);
 
-  const neutral =
-    Number(
-      sentiment?.summary?.neutral ??
-      0,
-    );
+  const neutral = Number(sentiment?.summary?.neutral ?? 0);
 
-  const negative =
-    Number(
-      sentiment?.summary?.negative ??
-      0,
-    );
+  const negative = Number(sentiment?.summary?.negative ?? 0);
 
-  const safePositive =
-    Number.isFinite(positive)
-      ? positive
-      : 0;
+  const safePositive = Number.isFinite(positive) ? positive : 0;
 
-  const safeNeutral =
-    Number.isFinite(neutral)
-      ? neutral
-      : 0;
+  const safeNeutral = Number.isFinite(neutral) ? neutral : 0;
 
-  const safeNegative =
-    Number.isFinite(negative)
-      ? negative
-      : 0;
+  const safeNegative = Number.isFinite(negative) ? negative : 0;
 
-  const total =
-    safePositive +
-    safeNeutral +
-    safeNegative;
+  const total = safePositive + safeNeutral + safeNegative;
 
-  const positivePercentage =
-    total > 0
-      ? (safePositive / total) *
-      100
-      : 0;
+  const positivePercentage = total > 0 ? (safePositive / total) * 100 : 0;
 
-  const neutralPercentage =
-    total > 0
-      ? (safeNeutral / total) *
-      100
-      : 0;
+  const neutralPercentage = total > 0 ? (safeNeutral / total) * 100 : 0;
 
-  const negativePercentage =
-    total > 0
-      ? (safeNegative / total) *
-      100
-      : 0;
+  const negativePercentage = total > 0 ? (safeNegative / total) * 100 : 0;
 
-  const polarityIndex =
-    total > 0
-      ? (safePositive -
-        safeNegative) /
-      total
-      : 0;
+  const polarityIndex = total > 0 ? (safePositive - safeNegative) / total : 0;
 
   const query = `
     INSERT INTO trend_sentiment_snapshots (
@@ -2477,41 +1938,34 @@ async function persistSentimentSnapshot(
         EXCLUDED.polarity_index
   `;
 
-  await queryWithTimeout(
-    query,
-    [
-      snapshotId,
-      safePositive,
-      safeNeutral,
-      safeNegative,
-      positivePercentage,
-      neutralPercentage,
-      negativePercentage,
-      polarityIndex,
-    ],
-  );
+  await queryWithTimeout(query, [
+    snapshotId,
+    safePositive,
+    safeNeutral,
+    safeNegative,
+    positivePercentage,
+    neutralPercentage,
+    negativePercentage,
+    polarityIndex,
+  ]);
 }
 
 // ============================================================================
 // DEMOGRAPHIC SNAPSHOT
 // ============================================================================
 
-function buildFallbackAuthorProfiles(
-  events,
-) {
+function buildFallbackAuthorProfiles(events) {
   const profiles = [];
   const seen = new Set();
 
   for (const event of events) {
-    const authorId =
-      extractEventAuthorId(event);
+    const authorId = extractEventAuthorId(event);
 
     if (!authorId) {
       continue;
     }
 
-    const key =
-      `${event.platform}:${authorId}`;
+    const key = `${event.platform}:${authorId}`;
 
     if (seen.has(key)) {
       continue;
@@ -2520,45 +1974,28 @@ function buildFallbackAuthorProfiles(
     seen.add(key);
 
     profiles.push({
-      platform:
-        event.platform,
+      platform: event.platform,
 
-      authorId:
-        String(authorId),
+      authorId: String(authorId),
 
-      handle:
-        event?.author?.authorHandle ??
-        event?.author?.username ??
-        null,
+      handle: event?.author?.authorHandle ?? event?.author?.username ?? null,
 
-      displayName:
-        event?.author?.authorName ??
-        event?.author?.name ??
-        null,
+      displayName: event?.author?.authorName ?? event?.author?.name ?? null,
 
-      bio:
-        event?.author?.authorBio ??
-        event?.author?.bio ??
-        null,
+      bio: event?.author?.authorBio ?? event?.author?.bio ?? null,
 
       location:
-        event?.author?.authorLocation ??
-        event?.author?.location ??
-        null,
+        event?.author?.authorLocation ?? event?.author?.location ?? null,
 
       followerCount:
-        event?.platformData
-          ?.authorFollowers ??
-        event?.author?.profile
-          ?.followers ??
+        event?.platformData?.authorFollowers ??
+        event?.author?.profile?.followers ??
         event?.author?.followers ??
         null,
 
       verified:
-        event?.platformData
-          ?.authorVerified ??
-        event?.author?.profile
-          ?.verified ??
+        event?.platformData?.authorVerified ??
+        event?.author?.profile?.verified ??
         event?.author?.verified ??
         null,
     });
@@ -2567,23 +2004,16 @@ function buildFallbackAuthorProfiles(
   return profiles;
 }
 
-async function persistDemographicSnapshot(
-  snapshotId,
-  demographic,
-) {
+async function persistDemographicSnapshot(snapshotId, demographic) {
   if (!demographic) {
     return;
   }
 
   const ageDistribution =
-    demographic?.ageDistribution ??
-    demographic?.age_distribution ??
-    null;
+    demographic?.ageDistribution ?? demographic?.age_distribution ?? null;
 
   const genderDistribution =
-    demographic?.genderDistribution ??
-    demographic?.gender_distribution ??
-    null;
+    demographic?.genderDistribution ?? demographic?.gender_distribution ?? null;
 
   const professionalInterests =
     demographic?.professionalInterests ??
@@ -2622,27 +2052,21 @@ async function persistDemographicSnapshot(
         EXCLUDED.data
   `;
 
-  await queryWithTimeout(
-    query,
-    [
-      snapshotId,
-      json(ageDistribution),
-      json(genderDistribution),
-      json(professionalInterests),
-      json(demographic),
-    ],
-  );
+  await queryWithTimeout(query, [
+    snapshotId,
+    json(ageDistribution),
+    json(genderDistribution),
+    json(professionalInterests),
+    json(demographic),
+  ]);
 }
 
 // ============================================================================
 // NETWORK SNAPSHOT
 // ============================================================================
 
-function resolveNetworkTopInfluencerScore(
-  network,
-) {
-  const topInfluencer =
-    network?.topInfluencers?.[0];
+function resolveNetworkTopInfluencerScore(network) {
+  const topInfluencer = network?.topInfluencers?.[0];
 
   if (!topInfluencer) {
     return null;
@@ -2656,20 +2080,13 @@ function resolveNetworkTopInfluencerScore(
   ];
 
   for (const candidate of candidates) {
-    if (
-      candidate === null ||
-      candidate === undefined ||
-      candidate === ""
-    ) {
+    if (candidate === null || candidate === undefined || candidate === "") {
       continue;
     }
 
-    const numeric =
-      Number(candidate);
+    const numeric = Number(candidate);
 
-    if (
-      Number.isFinite(numeric)
-    ) {
+    if (Number.isFinite(numeric)) {
       return numeric;
     }
   }
@@ -2677,62 +2094,37 @@ function resolveNetworkTopInfluencerScore(
   return null;
 }
 
-function resolveNetworkTopInfluencerId(
-  network,
-) {
-  const topInfluencer =
-    network?.topInfluencers?.[0];
+function resolveNetworkTopInfluencerId(network) {
+  const topInfluencer = network?.topInfluencers?.[0];
 
   if (!topInfluencer) {
     return null;
   }
 
-  return (
-    topInfluencer.authorId ??
-    topInfluencer.id ??
-    null
-  );
+  return topInfluencer.authorId ?? topInfluencer.id ?? null;
 }
 
-function inferPlatformFromExternalId(
-  externalId,
-) {
-  if (
-    typeof externalId !==
-    "string"
-  ) {
+function inferPlatformFromExternalId(externalId) {
+  if (typeof externalId !== "string") {
     return null;
   }
 
-  const separatorIndex =
-    externalId.indexOf(":");
+  const separatorIndex = externalId.indexOf(":");
 
   if (separatorIndex <= 0) {
     return null;
   }
 
-  const prefix =
-    externalId
-      .slice(0, separatorIndex)
-      .trim()
-      .toLowerCase();
+  const prefix = externalId.slice(0, separatorIndex).trim().toLowerCase();
 
-  if (
-    SUPPORTED_PLATFORMS.includes(
-      prefix,
-    )
-  ) {
+  if (SUPPORTED_PLATFORMS.includes(prefix)) {
     return prefix;
   }
 
   return null;
 }
 
-function resolveNetworkEdgePlatform(
-  edge,
-  network,
-  events = [],
-) {
+function resolveNetworkEdgePlatform(edge, network, events = []) {
   const explicitPlatform =
     edge?.platform ??
     edge?.sourcePlatform ??
@@ -2741,80 +2133,45 @@ function resolveNetworkEdgePlatform(
     null;
 
   if (explicitPlatform) {
-    const normalized =
-      String(explicitPlatform)
-        .trim()
-        .toLowerCase();
+    const normalized = String(explicitPlatform).trim().toLowerCase();
 
-    if (
-      SUPPORTED_PLATFORMS.includes(
-        normalized,
-      )
-    ) {
+    if (SUPPORTED_PLATFORMS.includes(normalized)) {
       return normalized;
     }
   }
 
-  const candidates = [
-    edge?.source,
-    edge?.target,
-  ];
+  const candidates = [edge?.source, edge?.target];
 
-  for (
-    const candidate
-    of candidates
-  ) {
-    const inferred =
-      inferPlatformFromExternalId(
-        candidate,
-      );
+  for (const candidate of candidates) {
+    const inferred = inferPlatformFromExternalId(candidate);
 
     if (inferred) {
       return inferred;
     }
   }
 
-  const platforms =
-    new Set(
-      events
-        .map(
-          (event) =>
-            event?.platform,
-        )
-        .filter(Boolean),
-    );
+  const platforms = new Set(
+    events.map((event) => event?.platform).filter(Boolean),
+  );
 
   if (platforms.size === 1) {
-    return [
-      ...platforms,
-    ][0];
+    return [...platforms][0];
   }
 
   return null;
 }
 
-async function resolveAuthorDbId(
-  platform,
-  externalAuthorId,
-) {
-  if (
-    !platform ||
-    !externalAuthorId
-  ) {
+async function resolveAuthorDbId(platform, externalAuthorId) {
+  if (!platform || !externalAuthorId) {
     return null;
   }
 
-  if (
-    !SUPPORTED_PLATFORMS.includes(
-      platform,
-    )
-  ) {
+  if (!SUPPORTED_PLATFORMS.includes(platform)) {
     return null;
   }
 
-  const result =
-    await queryWithTimeout(
-      `
+  const result = await queryWithTimeout(
+    `
         SELECT id
         FROM authors
         WHERE
@@ -2822,91 +2179,44 @@ async function resolveAuthorDbId(
           AND external_author_id = $2
         LIMIT 1
       `,
-      [
-        platform,
-        String(externalAuthorId),
-      ],
-    );
-
-  return (
-    result.rows[0]?.id ??
-    null
+    [platform, String(externalAuthorId)],
   );
+
+  return result.rows[0]?.id ?? null;
 }
 
-async function persistNetworkSnapshot(
-  snapshotId,
-  network,
-) {
+async function persistNetworkSnapshot(snapshotId, network) {
   if (!network) {
     return;
   }
 
-  const summary =
-    network.summary ?? {};
+  const summary = network.summary ?? {};
 
-  const topInfluencerScore =
-    resolveNetworkTopInfluencerScore(
-      network,
-    );
+  const topInfluencerScore = resolveNetworkTopInfluencerScore(network);
 
-  const topInfluencerId =
-    resolveNetworkTopInfluencerId(
-      network,
-    );
+  const topInfluencerId = resolveNetworkTopInfluencerId(network);
 
-  const topInfluencerPlatform =
-    inferPlatformFromExternalId(
+  const topInfluencerPlatform = inferPlatformFromExternalId(topInfluencerId);
+
+  let topInfluencerAuthorDbId = null;
+
+  if (topInfluencerId && topInfluencerPlatform) {
+    topInfluencerAuthorDbId = await resolveAuthorDbId(
+      topInfluencerPlatform,
       topInfluencerId,
     );
-
-  let topInfluencerAuthorDbId =
-    null;
-
-  if (
-    topInfluencerId &&
-    topInfluencerPlatform
-  ) {
-    topInfluencerAuthorDbId =
-      await resolveAuthorDbId(
-        topInfluencerPlatform,
-        topInfluencerId,
-      );
   }
 
-  const nodeCount =
-    Number(
-      summary.nodes ??
-      network.nodes?.length ??
-      0,
-    );
+  const nodeCount = Number(summary.nodes ?? network.nodes?.length ?? 0);
 
-  const edgeCount =
-    Number(
-      summary.edges ??
-      network.edges?.length ??
-      0,
-    );
+  const edgeCount = Number(summary.edges ?? network.edges?.length ?? 0);
 
-  const communityCount =
-    Number(
-      summary.communities ??
-      (
-        Array.isArray(
-          network.communities,
-        )
-          ? network.communities
-            .length
-          : 0
-      ),
-    );
+  const communityCount = Number(
+    summary.communities ??
+      (Array.isArray(network.communities) ? network.communities.length : 0),
+  );
 
-  const density =
-    Number(
-      summary.density ??
-      network.density ??
-      0,
-    );
+  const density = Number(summary.density ?? network.density ?? 0);
 
   const query = `
     INSERT INTO trend_network_snapshots (
@@ -2950,54 +2260,33 @@ async function persistNetworkSnapshot(
         EXCLUDED.top_influencer_score
   `;
 
-  await queryWithTimeout(
-    query,
-    [
-      snapshotId,
+  await queryWithTimeout(query, [
+    snapshotId,
 
-      Number.isFinite(nodeCount)
-        ? nodeCount
-        : 0,
+    Number.isFinite(nodeCount) ? nodeCount : 0,
 
-      Number.isFinite(edgeCount)
-        ? edgeCount
-        : 0,
+    Number.isFinite(edgeCount) ? edgeCount : 0,
 
-      Number.isFinite(
-        communityCount,
-      )
-        ? communityCount
-        : 0,
+    Number.isFinite(communityCount) ? communityCount : 0,
 
-      Number.isFinite(density)
-        ? density
-        : 0,
+    Number.isFinite(density) ? density : 0,
 
-      topInfluencerAuthorDbId,
+    topInfluencerAuthorDbId,
 
-      topInfluencerScore ??
-      null,
-    ],
-  );
+    topInfluencerScore ?? null,
+  ]);
 }
 
 // ============================================================================
 // NETWORK RELATIONSHIPS
 // ============================================================================
 
-async function persistNetworkRelationships(
-  collectionId,
-  network,
-  events = [],
-) {
+async function persistNetworkRelationships(collectionId, network, events = []) {
   if (!network) {
     return;
   }
 
-  const edges =
-    Array.isArray(network.edges)
-      ? network.edges
-      : [];
+  const edges = Array.isArray(network.edges) ? network.edges : [];
 
   await queryWithTimeout(
     `
@@ -3008,97 +2297,50 @@ async function persistNetworkRelationships(
   );
 
   for (const edge of edges) {
-    const interactions =
-      edge?.interactions ?? {};
+    const interactions = edge?.interactions ?? {};
 
     const relationshipTypes = [
-      [
-        "follow",
-        interactions.follows,
-      ],
-      [
-        "like",
-        interactions.likes,
-      ],
-      [
-        "mention",
-        interactions.mentions,
-      ],
-      [
-        "reply",
-        interactions.replies,
-      ],
-      [
-        "quote",
-        interactions.quotes,
-      ],
-      [
-        "repost",
-        interactions.reposts,
-      ],
+      ["follow", interactions.follows],
+      ["like", interactions.likes],
+      ["mention", interactions.mentions],
+      ["reply", interactions.replies],
+      ["quote", interactions.quotes],
+      ["repost", interactions.reposts],
     ];
 
-    const platform =
-      resolveNetworkEdgePlatform(
-        edge,
-        network,
-        events,
-      );
+    const platform = resolveNetworkEdgePlatform(edge, network, events);
 
     if (!platform) {
       log(
         "Database",
         `Skipping network edge because platform could not be resolved | ` +
-        `source=${edge?.source ?? "unknown"} | ` +
-        `target=${edge?.target ?? "unknown"}`,
+          `source=${edge?.source ?? "unknown"} | ` +
+          `target=${edge?.target ?? "unknown"}`,
       );
 
       continue;
     }
 
-    if (
-      !SUPPORTED_PLATFORMS.includes(
-        platform,
-      )
-    ) {
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
       log(
         "Database",
         `Skipping network edge because platform '${platform}' ` +
-        `is unsupported | ` +
-        `source=${edge?.source ?? "unknown"} | ` +
-        `target=${edge?.target ?? "unknown"}`,
+          `is unsupported | ` +
+          `source=${edge?.source ?? "unknown"} | ` +
+          `target=${edge?.target ?? "unknown"}`,
       );
 
       continue;
     }
 
-    const sourceAuthorDbId =
-      await resolveAuthorDbId(
-        platform,
-        edge?.source,
-      );
+    const sourceAuthorDbId = await resolveAuthorDbId(platform, edge?.source);
 
-    const targetAuthorDbId =
-      await resolveAuthorDbId(
-        platform,
-        edge?.target,
-      );
+    const targetAuthorDbId = await resolveAuthorDbId(platform, edge?.target);
 
-    for (
-      const [
-        relationshipType,
-        count,
-      ] of relationshipTypes
-    ) {
-      const numericCount =
-        Number(count ?? 0);
+    for (const [relationshipType, count] of relationshipTypes) {
+      const numericCount = Number(count ?? 0);
 
-      if (
-        !Number.isFinite(
-          numericCount,
-        ) ||
-        numericCount <= 0
-      ) {
+      if (!Number.isFinite(numericCount) || numericCount <= 0) {
         continue;
       }
 
@@ -3131,50 +2373,34 @@ async function persistNetworkRelationships(
         )
       `;
 
-      await queryWithTimeout(
-        query,
-        [
-          collectionId,
+      await queryWithTimeout(query, [
+        collectionId,
 
-          null,
+        null,
 
-          sourceAuthorDbId,
-          targetAuthorDbId,
+        sourceAuthorDbId,
+        targetAuthorDbId,
 
-          edge?.source ??
-          null,
+        edge?.source ?? null,
 
-          edge?.target ??
-          null,
+        edge?.target ?? null,
 
-          platform,
+        platform,
 
-          relationshipType,
+        relationshipType,
 
-          edge?.lastInteraction ??
-          new Date().toISOString(),
+        edge?.lastInteraction ?? new Date().toISOString(),
 
-          json({
-            count:
-              numericCount,
+        json({
+          count: numericCount,
 
-            firstInteraction:
-              edge?.firstInteraction ??
-              null,
+          firstInteraction: edge?.firstInteraction ?? null,
 
-            lastInteraction:
-              edge?.lastInteraction ??
-              null,
+          lastInteraction: edge?.lastInteraction ?? null,
 
-            eventIds:
-              Array.isArray(
-                edge?.eventIds,
-              )
-                ? edge.eventIds
-                : [],
-          }),
-        ],
-      );
+          eventIds: Array.isArray(edge?.eventIds) ? edge.eventIds : [],
+        }),
+      ]);
     }
   }
 }
@@ -3183,10 +2409,7 @@ async function persistNetworkRelationships(
 // COLLECTION STATUS
 // ============================================================================
 
-async function markCollectionCompleted(
-  collectionId,
-  eventCount,
-) {
+async function markCollectionCompleted(collectionId, eventCount) {
   const query = `
     UPDATE collections
     SET
@@ -3203,14 +2426,7 @@ async function markCollectionCompleted(
     WHERE id = $1
   `;
 
-  const result =
-    await queryWithTimeout(
-      query,
-      [
-        collectionId,
-        eventCount,
-      ],
-    );
+  const result = await queryWithTimeout(query, [collectionId, eventCount]);
 
   if (result.rowCount !== 1) {
     throw new Error(
@@ -3223,20 +2439,14 @@ async function markCollectionCompleted(
 // DATABASE TRANSACTION
 // ============================================================================
 
-async function withTransaction(
-  callback,
-) {
+async function withTransaction(callback) {
   await ensurePostgresConnection();
 
   if (shuttingDown) {
-    throw new Error(
-      "Transaction aborted because shutdown is in progress.",
-    );
+    throw new Error("Transaction aborted because shutdown is in progress.");
   }
 
-  await queryWithTimeout(
-    "BEGIN",
-  );
+  await queryWithTimeout("BEGIN");
 
   try {
     if (shuttingDown) {
@@ -3245,8 +2455,7 @@ async function withTransaction(
       );
     }
 
-    const result =
-      await callback();
+    const result = await callback();
 
     if (shuttingDown) {
       throw new Error(
@@ -3254,21 +2463,14 @@ async function withTransaction(
       );
     }
 
-    await queryWithTimeout(
-      "COMMIT",
-    );
+    await queryWithTimeout("COMMIT");
 
     return result;
   } catch (err) {
     try {
-      await queryWithTimeout(
-        "ROLLBACK",
-      );
+      await queryWithTimeout("ROLLBACK");
     } catch (rollbackError) {
-      error(
-        "Database",
-        `Rollback failed: ${rollbackError.message}`,
-      );
+      error("Database", `Rollback failed: ${rollbackError.message}`);
     }
 
     throw err;
@@ -3280,109 +2482,73 @@ async function withTransaction(
 // ============================================================================
 
 function createSentimentWorker() {
-  if (
-    typeof analyzeBatch !==
-    "function"
-  ) {
-    throw new Error(
-      "Sentiment pipeline has not been loaded.",
-    );
+  if (typeof analyzeBatch !== "function") {
+    throw new Error("Sentiment pipeline has not been loaded.");
   }
 
   return new Worker(
     "SentimentQueue",
 
     async (job) => {
-      const startedAt =
-        Date.now();
+      const startedAt = Date.now();
 
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
-      const runId =
-        data.collection.collectionId;
+      const runId = data.collection.collectionId;
 
       log(
         "Sentiment",
         `START job=${job.id} | ` +
-        `events=${data.events.length} | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${runId}`,
+          `events=${data.events.length} | ` +
+          `Trend=${trendLabel} | ` +
+          `Run=${runId}`,
       );
 
       const textEntries = [];
 
-      for (
-        let index = 0;
-        index <
-        data.events.length;
-        index++
-      ) {
-        const event =
-          data.events[index];
+      for (let index = 0; index < data.events.length; index++) {
+        const event = data.events[index];
 
-        const text =
-          event.content?.text;
+        const text = event.content?.text;
 
-        if (
-          typeof text !==
-          "string" ||
-          !text.trim()
-        ) {
+        if (typeof text !== "string" || !text.trim()) {
           continue;
         }
 
         textEntries.push({
-          eventIndex:
-            index,
+          eventIndex: index,
 
-          eventId:
-            event.eventId,
+          eventId: event.eventId,
 
-          publishedAt:
-            event.time?.publishedAt ??
-            null,
+          publishedAt: event.time?.publishedAt ?? null,
 
-          platform:
-            event.platform,
+          platform: event.platform,
 
-          text:
-            text.trim(),
+          text: text.trim(),
         });
       }
 
       log(
         "Sentiment",
         `Found ${textEntries.length}/${data.events.length} ` +
-        `events with analyzable text.`,
+          `events with analyzable text.`,
       );
 
-      if (
-        textEntries.length ===
-        0
-      ) {
+      if (textEntries.length === 0) {
         const emptyResult = {
-          category:
-            "sentiment",
+          category: "sentiment",
 
-          eventCount:
-            data.events.length,
+          eventCount: data.events.length,
 
-          analyzedCount:
-            0,
+          analyzedCount: 0,
 
-          unanalyzedCount:
-            data.events.length,
+          unanalyzedCount: data.events.length,
 
-          platformCounts:
-            getPlatformCounts(
-              data.events,
-            ),
+          platformCounts: getPlatformCounts(data.events),
 
           results: [],
 
@@ -3414,8 +2580,8 @@ function createSentimentWorker() {
         success(
           "Sentiment",
           `DONE job=${job.id} | ` +
-          `0/${data.events.length} analyzed | ` +
-          `No analyzable text.`,
+            `0/${data.events.length} analyzed | ` +
+            `No analyzable text.`,
         );
 
         return emptyResult;
@@ -3426,94 +2592,64 @@ function createSentimentWorker() {
         `Sending ${textEntries.length} texts to sentiment pipeline...`,
       );
 
-      const predictions =
-        await analyzeBatch(
-          textEntries.map(
-            (entry) =>
-              entry.text,
-          ),
-        );
+      const predictions = await analyzeBatch(
+        textEntries.map((entry) => entry.text),
+      );
 
       if (
-        !Array.isArray(
-          predictions,
-        ) ||
-        predictions.length !==
-        textEntries.length
+        !Array.isArray(predictions) ||
+        predictions.length !== textEntries.length
       ) {
         throw new Error(
           `Sentiment pipeline returned ` +
-          `${predictions?.length ?? 0} results ` +
-          `for ${textEntries.length} events.`,
+            `${predictions?.length ?? 0} results ` +
+            `for ${textEntries.length} events.`,
         );
       }
 
       log(
         "Sentiment",
-        `Sentiment pipeline returned ` +
-        `${predictions.length} predictions.`,
+        `Sentiment pipeline returned ` + `${predictions.length} predictions.`,
       );
 
       const results = [];
 
-      for (
-        let i = 0;
-        i <
-        textEntries.length;
-        i++
-      ) {
-        const entry =
-          textEntries[i];
+      for (let i = 0; i < textEntries.length; i++) {
+        const entry = textEntries[i];
 
-        const prediction =
-          predictions[i];
+        const prediction = predictions[i];
 
-        if (
-          !prediction ||
-          typeof prediction !==
-          "object"
-        ) {
+        if (!prediction || typeof prediction !== "object") {
           continue;
         }
 
         results.push({
-          eventId:
-            entry.eventId,
+          eventId: entry.eventId,
 
-          platform:
-            entry.platform,
+          platform: entry.platform,
 
-          publishedAt:
-            entry.publishedAt,
+          publishedAt: entry.publishedAt,
 
-          polarity:
-            prediction.polarity ?? {
-              label: null,
-              confidence: null,
-            },
+          polarity: prediction.polarity ?? {
+            label: null,
+            confidence: null,
+          },
 
-          emotions:
-            Array.isArray(
-              prediction.emotions,
-            )
-              ? prediction.emotions
-              : [],
+          emotions: Array.isArray(prediction.emotions)
+            ? prediction.emotions
+            : [],
 
-          stance:
-            prediction.stance ?? {
-              label: null,
-              confidence: null,
-            },
+          stance: prediction.stance ?? {
+            label: null,
+            confidence: null,
+          },
 
-          sarcasm:
-            prediction.sarcasm ?? {
-              detected: null,
-              confidence: null,
-            },
+          sarcasm: prediction.sarcasm ?? {
+            detected: null,
+            confidence: null,
+          },
 
-          tier:
-            prediction.tier ??
-            null,
+          tier: prediction.tier ?? null,
 
           /*
            * Optional explanation returned
@@ -3522,9 +2658,7 @@ function createSentimentWorker() {
            * Does not break the existing
            * sentiment contract when absent.
            */
-          reason:
-            prediction.reason ??
-            null,
+          reason: prediction.reason ?? null,
         });
       }
 
@@ -3552,159 +2686,80 @@ function createSentimentWorker() {
         tier2: 0,
       };
 
-      for (
-        const result
-        of results
-      ) {
-        const polarity =
-          result.polarity?.label;
+      for (const result of results) {
+        const polarity = result.polarity?.label;
 
-        if (
-          Object.prototype.hasOwnProperty.call(
-            summary,
-            polarity,
-          )
-        ) {
-          summary[
-            polarity
-          ]++;
+        if (Object.prototype.hasOwnProperty.call(summary, polarity)) {
+          summary[polarity]++;
         }
 
-        if (
-          Array.isArray(
-            result.emotions,
-          )
-        ) {
-          for (
-            const emotion
-            of result.emotions
-          ) {
-            if (
-              !emotion?.label
-            ) {
+        if (Array.isArray(result.emotions)) {
+          for (const emotion of result.emotions) {
+            if (!emotion?.label) {
               continue;
             }
 
-            emotions[
-              emotion.label
-            ] =
-              (
-                emotions[
-                emotion.label
-                ] || 0
-              ) + 1;
+            emotions[emotion.label] = (emotions[emotion.label] || 0) + 1;
           }
         }
 
-        const stanceLabel =
-          result.stance?.label;
+        const stanceLabel = result.stance?.label;
 
-        if (
-          Object.prototype.hasOwnProperty.call(
-            stance,
-            stanceLabel,
-          )
-        ) {
-          stance[
-            stanceLabel
-          ]++;
+        if (Object.prototype.hasOwnProperty.call(stance, stanceLabel)) {
+          stance[stanceLabel]++;
         }
 
-        if (
-          result.sarcasm
-            ?.detected === true
-        ) {
+        if (result.sarcasm?.detected === true) {
           sarcasm.detected++;
-        } else if (
-          result.sarcasm
-            ?.detected === false
-        ) {
+        } else if (result.sarcasm?.detected === false) {
           sarcasm.notDetected++;
         }
 
-        if (
-          result.tier === 1
-        ) {
+        if (result.tier === 1) {
           tierUsage.tier1++;
-        } else if (
-          result.tier === 2
-        ) {
+        } else if (result.tier === 2) {
           tierUsage.tier2++;
         }
       }
 
-      let overallSentiment =
-        "unknown";
+      let overallSentiment = "unknown";
 
-      const totalAnalyzed =
-        results.length;
+      const totalAnalyzed = results.length;
 
-      if (
-        totalAnalyzed > 0
-      ) {
-        const {
-          positive,
-          negative,
-          neutral,
-        } = summary;
+      if (totalAnalyzed > 0) {
+        const { positive, negative, neutral } = summary;
 
-        const difference =
-          Math.abs(
-            positive -
-            negative,
-          );
+        const difference = Math.abs(positive - negative);
 
         const isPolarized =
           positive > 0 &&
           negative > 0 &&
-          difference /
-          totalAnalyzed <
-          0.15 &&
-          positive +
-          negative >
-          neutral;
+          difference / totalAnalyzed < 0.15 &&
+          positive + negative > neutral;
 
-        if (
-          isPolarized
-        ) {
-          overallSentiment =
-            "mixed";
+        if (isPolarized) {
+          overallSentiment = "mixed";
         } else {
-          overallSentiment =
-            Object.keys(
-              summary,
-            ).reduce(
-              (a, b) =>
-                summary[a] >
-                  summary[b]
-                  ? a
-                  : b,
-            );
+          overallSentiment = Object.keys(summary).reduce((a, b) =>
+            summary[a] > summary[b] ? a : b,
+          );
         }
       }
 
       const finalResult = {
-        category:
-          "sentiment",
+        category: "sentiment",
 
         trendLabel,
 
         overallSentiment,
 
-        eventCount:
-          data.events.length,
+        eventCount: data.events.length,
 
-        analyzedCount:
-          results.length,
+        analyzedCount: results.length,
 
-        unanalyzedCount:
-          data.events.length -
-          results.length,
+        unanalyzedCount: data.events.length - results.length,
 
-        platformCounts:
-          getPlatformCounts(
-            data.events,
-          ),
+        platformCounts: getPlatformCounts(data.events),
 
         summary,
 
@@ -3719,28 +2774,24 @@ function createSentimentWorker() {
         results,
       };
 
-      const duration =
-        Date.now() -
-        startedAt;
+      const duration = Date.now() - startedAt;
 
       success(
         "Sentiment",
         `DONE job=${job.id} | ` +
-        `${results.length}/${data.events.length} analyzed | ` +
-        `Tier1=${tierUsage.tier1} | ` +
-        `Tier2=${tierUsage.tier2} | ` +
-        `${duration}ms`,
+          `${results.length}/${data.events.length} analyzed | ` +
+          `Tier1=${tierUsage.tier1} | ` +
+          `Tier2=${tierUsage.tier2} | ` +
+          `${duration}ms`,
       );
 
       return finalResult;
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        SENTIMENT_CONCURRENCY,
+      concurrency: SENTIMENT_CONCURRENCY,
     },
   );
 }
@@ -3749,9 +2800,7 @@ function createSentimentWorker() {
 // 2. DEMOGRAPHIC WORKER
 // ============================================================================
 
-async function runGoogleTrendDemographics(
-  trendLabel,
-) {
+async function runGoogleTrendDemographics(trendLabel) {
   /*
    * Google Trends currently provides:
    *
@@ -3766,29 +2815,20 @@ async function runGoogleTrendDemographics(
 
   const country = "India";
 
-  const endTime =
-    new Date();
+  const endTime = new Date();
 
-  const startTime =
-    new Date(endTime);
+  const startTime = new Date(endTime);
 
-  startTime.setDate(
-    startTime.getDate() - 30,
-  );
+  startTime.setDate(startTime.getDate() - 30);
 
   let timelines = null;
   let regionals = null;
 
   try {
-    timelines =
-      await googleTrendTimeLine(
-        trendLabel,
-        country,
-        {
-          startTime,
-          endTime,
-        },
-      );
+    timelines = await googleTrendTimeLine(trendLabel, country, {
+      startTime,
+      endTime,
+    });
   } catch (err) {
     error(
       "Demographic",
@@ -3797,15 +2837,10 @@ async function runGoogleTrendDemographics(
   }
 
   try {
-    regionals =
-      await googleTrendRegions(
-        trendLabel,
-        country,
-        {
-          startTime,
-          endTime,
-        },
-      );
+    regionals = await googleTrendRegions(trendLabel, country, {
+      startTime,
+      endTime,
+    });
   } catch (err) {
     error(
       "Demographic",
@@ -3817,10 +2852,8 @@ async function runGoogleTrendDemographics(
     timelines,
     regionals,
     country,
-    startTime:
-      startTime.toISOString(),
-    endTime:
-      endTime.toISOString(),
+    startTime: startTime.toISOString(),
+    endTime: endTime.toISOString(),
   };
 }
 
@@ -3829,67 +2862,46 @@ function createDemographicWorker() {
     "DemographicQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
-      const explicitProfiles =
-        Array.isArray(
-          data.authorProfiles,
-        )
-          ? data.authorProfiles
-          : [];
+      const explicitProfiles = Array.isArray(data.authorProfiles)
+        ? data.authorProfiles
+        : [];
 
       const profiles =
         explicitProfiles.length > 0
           ? explicitProfiles
-          : buildFallbackAuthorProfiles(
-            data.events,
-          );
+          : buildFallbackAuthorProfiles(data.events);
 
       /*
        * Google Trends enhancement
        */
+      //to split the trend label before giving to google trends ----------------
+
+      const segmentedTrendLabel = await segmenter.segmentHashtag(trendLabel);
+      console.log(`the segment trend label is : ${segmentedTrendLabel}`);
       const googleTrends =
-        await runGoogleTrendDemographics(
-          trendLabel,
-        );
+        await runGoogleTrendDemographics(segmentedTrendLabel);
 
-      const timelineCount =
-        Array.isArray(
-          googleTrends
-            ?.timelines
-            ?.timeline,
-        )
-          ? googleTrends
-            .timelines
-            .timeline
-            .length
-          : 0;
+      const timelineCount = Array.isArray(googleTrends?.timelines?.timeline)
+        ? googleTrends.timelines.timeline.length
+        : 0;
 
-      const regionalCount =
-        Array.isArray(
-          googleTrends
-            ?.regionals
-            ?.regions,
-        )
-          ? googleTrends
-            .regionals
-            .regions
-            .length
-          : 0;
+      const regionalCount = Array.isArray(googleTrends?.regionals?.regions)
+        ? googleTrends.regionals.regions.length
+        : 0;
 
       log(
         "Demographic",
         `Processing ${data.events.length} events | ` +
-        `Profiles=${profiles.length} | ` +
-        `TimeLines=${timelineCount} | ` +
-        `Regionals=${regionalCount} | ` +
-        `Trend=${trendLabel}`,
+          `Profiles=${profiles.length} | ` +
+          `TimeLines=${timelineCount} | ` +
+          `Regionals=${regionalCount} | ` +
+          `Trend=${trendLabel}`,
       );
 
       /*
@@ -3901,20 +2913,15 @@ function createDemographicWorker() {
        * demographic ground truth.
        */
       const result = {
-        category:
-          "demographic",
+        category: "demographic",
 
-        topAge:
-          null,
+        topAge: null,
 
-        topRegion:
-          null,
+        topRegion: null,
 
-        eventCount:
-          data.events.length,
+        eventCount: data.events.length,
 
-        profilesAvailable:
-          profiles.length,
+        profilesAvailable: profiles.length,
 
         googleTrends,
 
@@ -3923,33 +2930,28 @@ function createDemographicWorker() {
          * demographic inference model produces
          * defensible distributions.
          */
-        ageDistribution:
-          null,
+        ageDistribution: null,
 
-        genderDistribution:
-          null,
+        genderDistribution: null,
 
-        professionalInterests:
-          null,
+        professionalInterests: null,
       };
 
       success(
         "Demographic",
         `Processed ${data.events.length} events | ` +
-        `Profiles=${profiles.length} | ` +
-        `Timeline=${timelineCount} | ` +
-        `Regional=${regionalCount}.`,
+          `Profiles=${profiles.length} | ` +
+          `Timeline=${timelineCount} | ` +
+          `Regional=${regionalCount}.`,
       );
 
       return result;
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
+      concurrency: ANALYTICS_CONCURRENCY,
     },
   );
 }
@@ -3958,39 +2960,23 @@ function createDemographicWorker() {
 // 3. TREND WORKER
 // ============================================================================
 
-async function generateCachedTrendDescription(
-  trendLabel,
-  events,
-) {
-  if (
-    !trendLabel ||
-    trendLabel === "unknown"
-  ) {
+async function generateCachedTrendDescription(trendLabel, events) {
+  if (!trendLabel || trendLabel === "unknown") {
     return null;
   }
 
-  const cacheKey =
-    `trend:desc:${trendLabel}`;
+  const cacheKey = `trend:desc:${trendLabel}`;
 
   try {
-    const cached =
-      await localSharedRedis.get(
-        cacheKey,
-      );
+    const cached = await localSharedRedis.get(cacheKey);
 
     if (cached) {
-      log(
-        "Trend",
-        `Description cache hit for '${trendLabel}'.`,
-      );
+      log("Trend", `Description cache hit for '${trendLabel}'.`);
 
       return cached;
     }
   } catch (err) {
-    error(
-      "Trend",
-      `Description cache read failed: ${err.message}`,
-    );
+    error("Trend", `Description cache read failed: ${err.message}`);
   }
 
   /*
@@ -4004,40 +2990,25 @@ async function generateCachedTrendDescription(
    *
    *   event.text
    */
-  const contextEvents =
-    (events || [])
-      .filter(
-        (event) =>
-          typeof event?.content
-            ?.text === "string" &&
-          event.content.text
-            .trim()
-            .length > 10,
-      )
-      .slice(0, 10)
-      .map(
-        (event) =>
-          `- ${event.content.text
-            .trim()}`,
-      )
-      .join("\n");
+  const contextEvents = (events || [])
+    .filter(
+      (event) =>
+        typeof event?.content?.text === "string" &&
+        event.content.text.trim().length > 10,
+    )
+    .slice(0, 10)
+    .map((event) => `- ${event.content.text.trim()}`)
+    .join("\n");
 
-  const trendContext =
-    contextEvents.length > 0
-      ? contextEvents
-      : null;
+  const trendContext = contextEvents.length > 0 ? contextEvents : null;
 
   try {
-    log(
-      "Trend",
-      `Fetching description from Groq for trend: ${trendLabel}`,
-    );
+    log("Trend", `Fetching description from Groq for trend: ${trendLabel}`);
 
-    const description =
-      await generateTrendDescription(
-        trendLabel,
-        trendContext,
-      );
+    const description = await generateTrendDescription(
+      trendLabel,
+      trendContext,
+    );
 
     if (description) {
       try {
@@ -4047,21 +3018,11 @@ async function generateCachedTrendDescription(
          * This avoids repeatedly spending
          * Groq requests for the same trend.
          */
-        await localSharedRedis.setex(
-          cacheKey,
-          60 * 60 * 24,
-          description,
-        );
+        await localSharedRedis.setex(cacheKey, 60 * 60 * 24, description);
 
-        log(
-          "Trend",
-          `Description cached for 24h | trend=${trendLabel}`,
-        );
+        log("Trend", `Description cached for 24h | trend=${trendLabel}`);
       } catch (err) {
-        error(
-          "Trend",
-          `Description cache write failed: ${err.message}`,
-        );
+        error("Trend", `Description cache write failed: ${err.message}`);
       }
 
       return description;
@@ -4076,10 +3037,7 @@ async function generateCachedTrendDescription(
      * job just because Groq description
      * generation failed.
      */
-    error(
-      "Trend",
-      `Trend description generation failed: ${err.message}`,
-    );
+    error("Trend", `Trend description generation failed: ${err.message}`);
 
     return null;
   }
@@ -4090,133 +3048,99 @@ function createTrendWorker() {
     "TrendQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
       log(
         "Trend",
         `Processing ${data.events.length} events | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${data.collection.collectionId}`,
+          `Trend=${trendLabel} | ` +
+          `Run=${data.collection.collectionId}`,
       );
 
       // ----------------------------------------------------------------------
       // Local trend analysis
       // ----------------------------------------------------------------------
 
-      const result =
-        analyzeTrend(data);
+      const result = analyzeTrend(data);
 
-      if (
-        !result ||
-        typeof result !==
-        "object"
-      ) {
-        throw new Error(
-          "analyzeTrend() returned an invalid result.",
-        );
+      if (!result || typeof result !== "object") {
+        throw new Error("analyzeTrend() returned an invalid result.");
       }
 
       // ----------------------------------------------------------------------
       // Trend Description
       // ----------------------------------------------------------------------
 
-      const description =
-        await generateCachedTrendDescription(
-          trendLabel,
-          data.events,
-        );
+      const description = await generateCachedTrendDescription(
+        trendLabel,
+        data.events,
+      );
 
-      result.description =
-        description ||
-        "No description available.";
+      result.description = description || "No description available.";
 
       // ----------------------------------------------------------------------
       // Global trend statistics
       // ----------------------------------------------------------------------
 
-      await recordTrendStats(
-        localSharedRedis,
-        result,
-      );
+      await recordTrendStats(localSharedRedis, result);
 
-      const enriched =
-        await enrichWithGlobalRanking(
-          localSharedRedis,
-          result,
-        );
+      const enriched = await enrichWithGlobalRanking(localSharedRedis, result);
 
       // ----------------------------------------------------------------------
       // Forecasting
       // ----------------------------------------------------------------------
 
-      const history =
-        enriched.globalRanking
-          ?.scoreHistory ??
-        [];
+      const history = enriched.globalRanking?.scoreHistory ?? [];
 
-      const forecastData =
-        generateForecast(
-          enriched,
-          history,
-        );
+      const forecastData = generateForecast(enriched, history);
 
       await localSharedRedis.set(
         `trend:forecast:${enriched.id}`,
-        JSON.stringify(
-          forecastData,
-        ),
+        JSON.stringify(forecastData),
       );
 
       // ----------------------------------------------------------------------
       // Logging
       // ----------------------------------------------------------------------
 
-      const ranking =
-        enriched.globalRanking;
+      const ranking = enriched.globalRanking;
 
       if (ranking) {
         log(
           "Trend",
           `${enriched.name ?? trendLabel}: ` +
-          `score=${enriched.trendScore ?? "n/a"} ` +
-          `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
-          `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
-          `${ranking.totalTrackedTrends ?? "n/a"} ` +
-          `(top ${ranking.percentile ?? "n/a"}%) ` +
-          `${ranking.tierMovement ?? "stable"}`,
+            `score=${enriched.trendScore ?? "n/a"} ` +
+            `tier=${enriched.influence?.viralityTier ?? "n/a"} ` +
+            `rank=#${ranking.leaderboardPosition ?? "n/a"}/` +
+            `${ranking.totalTrackedTrends ?? "n/a"} ` +
+            `(top ${ranking.percentile ?? "n/a"}%) ` +
+            `${ranking.tierMovement ?? "stable"}`,
         );
       } else {
         log(
           "Trend",
           `${enriched.name ?? trendLabel}: ` +
-          `trend analysis completed without global ranking.`,
+            `trend analysis completed without global ranking.`,
         );
       }
 
       return {
-        category:
-          "trend",
+        category: "trend",
 
-        description:
-          description ||
-          "No description available.",
+        description: description || "No description available.",
 
         ...enriched,
       };
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
+      concurrency: ANALYTICS_CONCURRENCY,
     },
   );
 }
@@ -4230,50 +3154,30 @@ function createNetworkWorker() {
     "NetworkQueue",
 
     async (job) => {
-      const data =
-        getCanonicalData(job);
+      const data = getCanonicalData(job);
 
       validateCollection(data);
 
-      const trendLabel =
-        getTrendLabel(data);
+      const trendLabel = getTrendLabel(data);
 
       log(
         "Network",
         `Processing ${data.events.length} events | ` +
-        `Trend=${trendLabel} | ` +
-        `Run=${data.collection.collectionId}`,
+          `Trend=${trendLabel} | ` +
+          `Run=${data.collection.collectionId}`,
       );
 
-      const result =
-        analyzeNetwork(data);
+      const result = analyzeNetwork(data);
 
-      if (
-        !result ||
-        typeof result !==
-        "object"
-      ) {
-        throw new Error(
-          "analyzeNetwork() returned an invalid result.",
-        );
+      if (!result || typeof result !== "object") {
+        throw new Error("analyzeNetwork() returned an invalid result.");
       }
 
-      const nodeCount =
-        Array.isArray(
-          result.nodes,
-        )
-          ? result.nodes.length
-          : 0;
+      const nodeCount = Array.isArray(result.nodes) ? result.nodes.length : 0;
 
-      const edgeCount =
-        Array.isArray(
-          result.edges,
-        )
-          ? result.edges.length
-          : 0;
+      const edgeCount = Array.isArray(result.edges) ? result.edges.length : 0;
 
-      const topInfluencer =
-        result.topInfluencers?.[0];
+      const topInfluencer = result.topInfluencers?.[0];
 
       const topInfluencerLabel =
         topInfluencer?.label ??
@@ -4282,34 +3186,28 @@ function createNetworkWorker() {
         topInfluencer?.id ??
         "none";
 
-      const topInfluencerScore =
-        resolveNetworkTopInfluencerScore(
-          result,
-        );
+      const topInfluencerScore = resolveNetworkTopInfluencerScore(result);
 
       log(
         "Network",
         `${trendLabel}: ` +
-        `${nodeCount} nodes, ` +
-        `${edgeCount} edges, ` +
-        `top=${topInfluencerLabel} ` +
-        `score=${topInfluencerScore ?? "n/a"}`,
+          `${nodeCount} nodes, ` +
+          `${edgeCount} edges, ` +
+          `top=${topInfluencerLabel} ` +
+          `score=${topInfluencerScore ?? "n/a"}`,
       );
 
       return {
-        category:
-          "network",
+        category: "network",
 
         ...result,
       };
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        ANALYTICS_CONCURRENCY,
+      concurrency: ANALYTICS_CONCURRENCY,
     },
   );
 }
@@ -4323,66 +3221,34 @@ function createDatabaseWorker() {
     "DatabaseQueue",
 
     async (job) => {
-      if (
-        !job?.data ||
-        typeof job.data !==
-        "object"
-      ) {
-        throw new Error(
-          "Database job data is missing or invalid.",
-        );
+      if (!job?.data || typeof job.data !== "object") {
+        throw new Error("Database job data is missing or invalid.");
       }
 
-      const {
-        trend_label,
-        runId,
-        eventIds,
-        schemaVersion,
-      } = job.data;
+      const { trend_label, runId, eventIds, schemaVersion } = job.data;
 
-      const canonical =
-        job.data.canonical;
+      const canonical = job.data.canonical;
 
-      if (
-        !canonical ||
-        typeof canonical !==
-        "object"
-      ) {
-        throw new Error(
-          "Database job is missing canonical collection.",
-        );
+      if (!canonical || typeof canonical !== "object") {
+        throw new Error("Database job is missing canonical collection.");
       }
 
-      validateCollection(
-        canonical,
-      );
+      validateCollection(canonical);
 
-      const resolvedRunId =
-        runId ??
-        canonical.collection
-          .collectionId;
+      const resolvedRunId = runId ?? canonical.collection.collectionId;
 
-      const resolvedTrendLabel =
-        trend_label ??
-        getTrendLabel(
-          canonical,
-        );
+      const resolvedTrendLabel = trend_label ?? getTrendLabel(canonical);
 
-      const resolvedSchemaVersion =
-        schemaVersion ??
-        canonical.schemaVersion;
+      const resolvedSchemaVersion = schemaVersion ?? canonical.schemaVersion;
 
       log(
         "Database",
         `Gathering results | ` +
-        `Trend=${resolvedTrendLabel} | ` +
-        `Run=${resolvedRunId}`,
+          `Trend=${resolvedTrendLabel} | ` +
+          `Run=${resolvedRunId}`,
       );
 
-      if (
-        eventIds !== undefined &&
-        !Array.isArray(eventIds)
-      ) {
+      if (eventIds !== undefined && !Array.isArray(eventIds)) {
         throw new Error(
           "Database job eventIds must be an array when provided.",
         );
@@ -4390,164 +3256,104 @@ function createDatabaseWorker() {
 
       if (
         Array.isArray(eventIds) &&
-        eventIds.length !==
-        canonical.events.length
+        eventIds.length !== canonical.events.length
       ) {
         throw new Error(
           `Database event accounting mismatch: ` +
-          `eventIds=${eventIds.length}, ` +
-          `canonical.events=${canonical.events.length}.`,
+            `eventIds=${eventIds.length}, ` +
+            `canonical.events=${canonical.events.length}.`,
         );
       }
 
-      const childResults =
-        await job.getChildrenValues();
+      const childResults = await job.getChildrenValues();
 
-      const rawValues =
-        Object.values(
-          childResults,
-        );
+      const rawValues = Object.values(childResults);
 
-      log(
-        "Database",
-        `Received ${rawValues.length} child result(s).`,
-      );
+      log("Database", `Received ${rawValues.length} child result(s).`);
 
-      const EXPECTED_ANALYTICS_CATEGORIES =
-        [
-          "sentiment",
-          "demographic",
-          "trend",
-          "network",
-        ];
+      const EXPECTED_ANALYTICS_CATEGORIES = [
+        "sentiment",
+        "demographic",
+        "trend",
+        "network",
+      ];
 
-      if (
-        rawValues.length !==
-        EXPECTED_ANALYTICS_CATEGORIES.length
-      ) {
+      if (rawValues.length !== EXPECTED_ANALYTICS_CATEGORIES.length) {
         throw new Error(
           `Database expected ` +
-          `${EXPECTED_ANALYTICS_CATEGORIES.length} child results ` +
-          `but received ${rawValues.length}.`,
+            `${EXPECTED_ANALYTICS_CATEGORIES.length} child results ` +
+            `but received ${rawValues.length}.`,
         );
       }
 
       const analytics = {};
 
-      for (
-        const result
-        of rawValues
-      ) {
-        if (
-          !result ||
-          typeof result !==
-          "object"
-        ) {
-          throw new Error(
-            "Database received an invalid child result.",
-          );
+      for (const result of rawValues) {
+        if (!result || typeof result !== "object") {
+          throw new Error("Database received an invalid child result.");
         }
 
         if (!result.category) {
-          throw new Error(
-            "Database received a child result without category.",
-          );
+          throw new Error("Database received a child result without category.");
         }
 
-        const {
-          category,
-          ...resultData
-        } = result;
+        const { category, ...resultData } = result;
 
-        if (
-          !EXPECTED_ANALYTICS_CATEGORIES.includes(
-            category,
-          )
-        ) {
-          throw new Error(
-            `Unexpected analytics category '${category}'.`,
-          );
+        if (!EXPECTED_ANALYTICS_CATEGORIES.includes(category)) {
+          throw new Error(`Unexpected analytics category '${category}'.`);
         }
 
-        if (
-          analytics[category]
-        ) {
-          throw new Error(
-            `Duplicate analytics category '${category}'.`,
-          );
+        if (analytics[category]) {
+          throw new Error(`Duplicate analytics category '${category}'.`);
         }
 
-        analytics[category] =
-          resultData;
+        analytics[category] = resultData;
       }
 
-      const missingCategories =
-        EXPECTED_ANALYTICS_CATEGORIES.filter(
-          (category) =>
-            !Object.prototype.hasOwnProperty.call(
-              analytics,
-              category,
-            ),
-        );
+      const missingCategories = EXPECTED_ANALYTICS_CATEGORIES.filter(
+        (category) =>
+          !Object.prototype.hasOwnProperty.call(analytics, category),
+      );
 
-      if (
-        missingCategories.length >
-        0
-      ) {
+      if (missingCategories.length > 0) {
         throw new Error(
           `Database is missing child analytics: ` +
-          `${missingCategories.join(", ")}`,
+            `${missingCategories.join(", ")}`,
         );
       }
 
-      const analyticsCategories =
-        Object.keys(
-          analytics,
-        );
+      const analyticsCategories = Object.keys(analytics);
 
       log(
         "Database",
-        `Analytics categories: ` +
-        `${analyticsCategories.join(", ")}`,
+        `Analytics categories: ` + `${analyticsCategories.join(", ")}`,
       );
 
       log(
         "Database",
         `Child result validation: ` +
-        `sentiment=${Boolean(
-          analytics.sentiment,
-        )}, ` +
-        `demographic=${Boolean(
-          analytics.demographic,
-        )}, ` +
-        `trend=${Boolean(
-          analytics.trend,
-        )}, ` +
-        `network=${Boolean(
-          analytics.network,
-        )}`,
+          `sentiment=${Boolean(analytics.sentiment)}, ` +
+          `demographic=${Boolean(analytics.demographic)}, ` +
+          `trend=${Boolean(analytics.trend)}, ` +
+          `network=${Boolean(analytics.network)}`,
       );
 
       log(
         "Database",
         `Canonical validation: ` +
-        `schema=${resolvedSchemaVersion} | ` +
-        `events=${canonical.events.length} | ` +
-        `run=${resolvedRunId}`,
+          `schema=${resolvedSchemaVersion} | ` +
+          `events=${canonical.events.length} | ` +
+          `run=${resolvedRunId}`,
       );
 
       const databaseRecord = {
-        run_id:
-          resolvedRunId,
+        run_id: resolvedRunId,
 
-        trend_label:
-          resolvedTrendLabel,
+        trend_label: resolvedTrendLabel,
 
-        schema_version:
-          resolvedSchemaVersion,
+        schema_version: resolvedSchemaVersion,
 
-        canonical_collection:
-          canonical,
+        canonical_collection: canonical,
 
         analytics,
       };
@@ -4559,184 +3365,142 @@ function createDatabaseWorker() {
         !databaseRecord.canonical_collection ||
         !databaseRecord.analytics
       ) {
-        throw new Error(
-          "Database record construction failed.",
-        );
+        throw new Error("Database record construction failed.");
       }
 
-      const persistenceResult =
-        await withTransaction(
-          async () => {
-            // ---------------------------------------------------------------
-            // 1. Trend
-            // ---------------------------------------------------------------
+      const persistenceResult = await withTransaction(async () => {
+        // ---------------------------------------------------------------
+        // 1. Trend
+        // ---------------------------------------------------------------
 
-            const trend =
-              await upsertTrend(
-                canonical,
-              );
+        const trend = await upsertTrend(canonical);
 
-            log(
-              "Database",
-              `Trend resolved | ` +
-              `id=${trend.id} | ` +
-              `label=${trend.canonical_label}`,
-            );
-
-            // ---------------------------------------------------------------
-            // 2. Collection
-            // ---------------------------------------------------------------
-
-            const collection =
-              await createCollection(
-                canonical,
-                trend,
-                resolvedRunId,
-              );
-
-            log(
-              "Database",
-              `Collection persisted | ` +
-              `sequence=#${collection.collection_sequence} | ` +
-              `id=${collection.id} | ` +
-              `external=${collection.external_collection_id} | ` +
-              `status=${collection.status} | ` +
-              `events=${collection.event_count}`,
-            );
-
-            // ---------------------------------------------------------------
-            // 3. Events
-            // ---------------------------------------------------------------
-
-            const persistedEvents =
-              await persistEvents(
-                canonical,
-                collection.id,
-              );
-
-            log(
-              "Database",
-              `Events persisted | ` +
-              `${persistedEvents.length}/${canonical.events.length}`,
-            );
-
-            // ---------------------------------------------------------------
-            // 4. Trend-event links
-            // ---------------------------------------------------------------
-
-            await persistTrendEvents(
-              trend.id,
-              collection.id,
-              persistedEvents,
-            );
-
-            log(
-              "Database",
-              `Trend-event links persisted | ` +
-              `count=${persistedEvents.length}`,
-            );
-
-            // ---------------------------------------------------------------
-            // 5. Trend snapshot
-            // ---------------------------------------------------------------
-
-            const snapshot =
-              await createTrendSnapshot(
-                canonical,
-                trend,
-                collection,
-                analytics,
-              );
-
-            log(
-              "Database",
-              `Snapshot persisted | ` +
-              `id=${snapshot.id}`,
-            );
-
-            // ---------------------------------------------------------------
-            // 6. Dedicated analytics persistence
-            // ---------------------------------------------------------------
-
-            await persistAnalyticsSnapshot(
-              snapshot.id,
-              analytics,
-            );
-
-            // ---------------------------------------------------------------
-            // 7. Sentiment
-            // ---------------------------------------------------------------
-
-            await persistSentimentSnapshot(
-              snapshot.id,
-              analytics.sentiment,
-            );
-
-            // ---------------------------------------------------------------
-            // 8. Demographic
-            // ---------------------------------------------------------------
-
-            await persistDemographicSnapshot(
-              snapshot.id,
-              analytics.demographic,
-            );
-
-            // ---------------------------------------------------------------
-            // 9. Network
-            // ---------------------------------------------------------------
-
-            await persistNetworkSnapshot(
-              snapshot.id,
-              analytics.network,
-            );
-
-            // ---------------------------------------------------------------
-            // 10. Network relationships
-            // ---------------------------------------------------------------
-
-            await persistNetworkRelationships(
-              collection.id,
-              analytics.network,
-              canonical.events,
-            );
-
-            // ---------------------------------------------------------------
-            // 11. Complete collection
-            // ---------------------------------------------------------------
-
-            await markCollectionCompleted(
-              collection.id,
-              canonical.events.length,
-            );
-
-            return {
-              trend,
-              collection,
-              snapshot,
-              persistedEvents,
-            };
-          },
+        log(
+          "Database",
+          `Trend resolved | ` +
+            `id=${trend.id} | ` +
+            `label=${trend.canonical_label}`,
         );
+
+        // ---------------------------------------------------------------
+        // 2. Collection
+        // ---------------------------------------------------------------
+
+        const collection = await createCollection(
+          canonical,
+          trend,
+          resolvedRunId,
+        );
+
+        log(
+          "Database",
+          `Collection persisted | ` +
+            `sequence=#${collection.collection_sequence} | ` +
+            `id=${collection.id} | ` +
+            `external=${collection.external_collection_id} | ` +
+            `status=${collection.status} | ` +
+            `events=${collection.event_count}`,
+        );
+
+        // ---------------------------------------------------------------
+        // 3. Events
+        // ---------------------------------------------------------------
+
+        const persistedEvents = await persistEvents(canonical, collection.id);
+
+        log(
+          "Database",
+          `Events persisted | ` +
+            `${persistedEvents.length}/${canonical.events.length}`,
+        );
+
+        // ---------------------------------------------------------------
+        // 4. Trend-event links
+        // ---------------------------------------------------------------
+
+        await persistTrendEvents(trend.id, collection.id, persistedEvents);
+
+        log(
+          "Database",
+          `Trend-event links persisted | ` + `count=${persistedEvents.length}`,
+        );
+
+        // ---------------------------------------------------------------
+        // 5. Trend snapshot
+        // ---------------------------------------------------------------
+
+        const snapshot = await createTrendSnapshot(
+          canonical,
+          trend,
+          collection,
+          analytics,
+        );
+
+        log("Database", `Snapshot persisted | ` + `id=${snapshot.id}`);
+
+        // ---------------------------------------------------------------
+        // 6. Dedicated analytics persistence
+        // ---------------------------------------------------------------
+
+        await persistAnalyticsSnapshot(snapshot.id, analytics);
+
+        // ---------------------------------------------------------------
+        // 7. Sentiment
+        // ---------------------------------------------------------------
+
+        await persistSentimentSnapshot(snapshot.id, analytics.sentiment);
+
+        // ---------------------------------------------------------------
+        // 8. Demographic
+        // ---------------------------------------------------------------
+
+        await persistDemographicSnapshot(snapshot.id, analytics.demographic);
+
+        // ---------------------------------------------------------------
+        // 9. Network
+        // ---------------------------------------------------------------
+
+        await persistNetworkSnapshot(snapshot.id, analytics.network);
+
+        // ---------------------------------------------------------------
+        // 10. Network relationships
+        // ---------------------------------------------------------------
+
+        await persistNetworkRelationships(
+          collection.id,
+          analytics.network,
+          canonical.events,
+        );
+
+        // ---------------------------------------------------------------
+        // 11. Complete collection
+        // ---------------------------------------------------------------
+
+        await markCollectionCompleted(collection.id, canonical.events.length);
+
+        return {
+          trend,
+          collection,
+          snapshot,
+          persistedEvents,
+        };
+      });
 
       log(
         "Database",
         `Prepared persistent state | ` +
-        `Trend=${persistenceResult.trend.id} | ` +
-        `Collection=#${persistenceResult.collection.collection_sequence} | ` +
-        `Snapshot=${persistenceResult.snapshot.id} | ` +
-        `Events=${persistenceResult.persistedEvents.length}`,
+          `Trend=${persistenceResult.trend.id} | ` +
+          `Collection=#${persistenceResult.collection.collection_sequence} | ` +
+          `Snapshot=${persistenceResult.snapshot.id} | ` +
+          `Events=${persistenceResult.persistedEvents.length}`,
       );
 
       log(
         "Database",
-        `Analytics persisted: ` +
-        `${analyticsCategories.join(", ")}`,
+        `Analytics persisted: ` + `${analyticsCategories.join(", ")}`,
       );
 
-      log(
-        "Database",
-        "Record validation: PASS",
-      );
+      log("Database", "Record validation: PASS");
 
       success(
         "Database",
@@ -4744,50 +3508,34 @@ function createDatabaseWorker() {
       );
 
       return {
-        status:
-          "success",
+        status: "success",
 
-        runId:
-          resolvedRunId,
+        runId: resolvedRunId,
 
-        trendId:
-          persistenceResult.trend.id,
+        trendId: persistenceResult.trend.id,
 
-        trendLabel:
-          resolvedTrendLabel,
+        trendLabel: resolvedTrendLabel,
 
-        collectionId:
-          persistenceResult
-            .collection.id,
+        collectionId: persistenceResult.collection.id,
 
-        collectionSequence:
-          persistenceResult
-            .collection
-            .collection_sequence,
+        collectionSequence: persistenceResult.collection.collection_sequence,
 
-        snapshotId:
-          persistenceResult
-            .snapshot.id,
+        snapshotId: persistenceResult.snapshot.id,
 
-        schemaVersion:
-          resolvedSchemaVersion,
+        schemaVersion: resolvedSchemaVersion,
 
-        eventCount:
-          canonical.events.length,
+        eventCount: canonical.events.length,
 
         analyticsCategories,
 
-        persistence:
-          "committed",
+        persistence: "committed",
       };
     },
 
     {
-      connection:
-        createBullMQConnection(),
+      connection: createBullMQConnection(),
 
-      concurrency:
-        DATABASE_CONCURRENCY,
+      concurrency: DATABASE_CONCURRENCY,
     },
   );
 }
@@ -4802,38 +3550,18 @@ let workers = [];
 // Worker Events
 // ============================================================================
 
-function registerWorkerEvents(
-  worker,
-) {
-  worker.on(
-    "completed",
-    (job) => {
-      success(
-        worker.name,
-        `Job ${job.id} completed.`,
-      );
-    },
-  );
+function registerWorkerEvents(worker) {
+  worker.on("completed", (job) => {
+    success(worker.name, `Job ${job.id} completed.`);
+  });
 
-  worker.on(
-    "failed",
-    (job, err) => {
-      error(
-        worker.name,
-        `Job ${job?.id ?? "unknown"} failed: ${err.message}`,
-      );
-    },
-  );
+  worker.on("failed", (job, err) => {
+    error(worker.name, `Job ${job?.id ?? "unknown"} failed: ${err.message}`);
+  });
 
-  worker.on(
-    "error",
-    (err) => {
-      error(
-        worker.name,
-        `Worker error: ${err.message}`,
-      );
-    },
-  );
+  worker.on("error", (err) => {
+    error(worker.name, `Worker error: ${err.message}`);
+  });
 }
 
 // ============================================================================
@@ -4854,20 +3582,15 @@ async function startWorkers() {
       return;
     }
 
-    const sentimentWorker =
-      createSentimentWorker();
+    const sentimentWorker = createSentimentWorker();
 
-    const demographicWorker =
-      createDemographicWorker();
+    const demographicWorker = createDemographicWorker();
 
-    const trendWorker =
-      createTrendWorker();
+    const trendWorker = createTrendWorker();
 
-    const networkWorker =
-      createNetworkWorker();
+    const networkWorker = createNetworkWorker();
 
-    const databaseWorker =
-      createDatabaseWorker();
+    const databaseWorker = createDatabaseWorker();
 
     workers = [
       sentimentWorker,
@@ -4877,102 +3600,57 @@ async function startWorkers() {
       databaseWorker,
     ];
 
-    for (
-      const worker
-      of workers
-    ) {
-      registerWorkerEvents(
-        worker,
-      );
+    for (const worker of workers) {
+      registerWorkerEvents(worker);
     }
 
-    console.log(
-      "\n========================================",
-    );
+    console.log("\n========================================");
 
-    console.log(
-      "BullMQ workers are online.",
-    );
+    console.log("BullMQ workers are online.");
 
-    console.log(
-      "========================================",
-    );
+    console.log("========================================");
 
-    console.log(
-      `Schema: ${SUPPORTED_SCHEMA_VERSION}`,
-    );
+    console.log(`Schema: ${SUPPORTED_SCHEMA_VERSION}`);
 
-    console.log(
-      "Queues:",
-    );
+    console.log("Queues:");
 
-    console.log(
-      `  - SentimentQueue      concurrency=${SENTIMENT_CONCURRENCY}`,
-    );
+    console.log(`  - SentimentQueue      concurrency=${SENTIMENT_CONCURRENCY}`);
 
-    console.log(
-      `  - DemographicQueue    concurrency=${ANALYTICS_CONCURRENCY}`,
-    );
+    console.log(`  - DemographicQueue    concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - TrendQueue          concurrency=${ANALYTICS_CONCURRENCY}`,
-    );
+    console.log(`  - TrendQueue          concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - NetworkQueue        concurrency=${ANALYTICS_CONCURRENCY}`,
-    );
+    console.log(`  - NetworkQueue        concurrency=${ANALYTICS_CONCURRENCY}`);
 
-    console.log(
-      `  - DatabaseQueue       concurrency=${DATABASE_CONCURRENCY}`,
-    );
+    console.log(`  - DatabaseQueue       concurrency=${DATABASE_CONCURRENCY}`);
 
-    console.log(
-      "Sentiment: loaded",
-    );
+    console.log("Sentiment: loaded");
 
-    console.log(
-      "Google Trends: enabled",
-    );
+    console.log("Google Trends: enabled");
 
-    console.log(
-      "Trend descriptions: Groq + Redis cache",
-    );
+    console.log("Trend descriptions: Groq + Redis cache");
 
-    console.log(
-      "Database: aggregation enabled",
-    );
+    console.log("Database: aggregation enabled");
 
-    console.log(
-      "PostgreSQL persistence: enabled",
-    );
+    console.log("PostgreSQL persistence: enabled");
 
     console.log(
       "Persistence model: trend → collection → authors → events → snapshot",
     );
 
-    console.log(
-      "Analytics persistence: dedicated snapshot tables",
-    );
+    console.log("Analytics persistence: dedicated snapshot tables");
 
-    console.log(
-      "========================================\n",
-    );
+    console.log("========================================\n");
   } catch (err) {
     if (shuttingDown) {
       return;
     }
 
-    console.error(
-      "\n========================================",
-    );
+    console.error("\n========================================");
 
-    console.error(
-      "FAILED TO START BULLMQ WORKERS",
-    );
+    console.error("FAILED TO START BULLMQ WORKERS");
 
-    console.error(
-      "========================================",
-    );
+    console.error("========================================");
 
     console.error(err);
 
@@ -4984,41 +3662,25 @@ async function startWorkers() {
 // Graceful Shutdown
 // ============================================================================
 
-async function shutdown(
-  signal,
-) {
+async function shutdown(signal) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
 
-  console.log(
-    `\nReceived ${signal}. ` +
-    `Shutting down BullMQ workers...`,
-  );
+  console.log(`\nReceived ${signal}. ` + `Shutting down BullMQ workers...`);
 
   // --------------------------------------------------------------------------
   // BullMQ workers
   // --------------------------------------------------------------------------
 
   try {
-    await Promise.all(
-      workers.map(
-        (worker) =>
-          worker.close(),
-      ),
-    );
+    await Promise.all(workers.map((worker) => worker.close()));
 
-    success(
-      "Shutdown",
-      "All BullMQ workers closed.",
-    );
+    success("Shutdown", "All BullMQ workers closed.");
   } catch (err) {
-    error(
-      "Shutdown",
-      `Failed to close workers cleanly: ${err.message}`,
-    );
+    error("Shutdown", `Failed to close workers cleanly: ${err.message}`);
   }
 
   // --------------------------------------------------------------------------
@@ -5026,17 +3688,10 @@ async function shutdown(
   // --------------------------------------------------------------------------
 
   try {
-    if (
-      localSharedRedis &&
-      typeof localSharedRedis.quit ===
-      "function"
-    ) {
+    if (localSharedRedis && typeof localSharedRedis.quit === "function") {
       await localSharedRedis.quit();
 
-      success(
-        "Shutdown",
-        "Shared Redis connection closed.",
-      );
+      success("Shutdown", "Shared Redis connection closed.");
     }
   } catch (err) {
     error(
@@ -5050,39 +3705,21 @@ async function shutdown(
   // --------------------------------------------------------------------------
 
   try {
-    if (
-      pgClient &&
-      typeof pgClient.end ===
-      "function"
-    ) {
+    if (pgClient && typeof pgClient.end === "function") {
       await pgClient.end();
 
-      success(
-        "Shutdown",
-        "PostgreSQL connection closed.",
-      );
+      success("Shutdown", "PostgreSQL connection closed.");
     }
   } catch (err) {
-    error(
-      "Shutdown",
-      `Failed to close PostgreSQL connection: ${err.message}`,
-    );
+    error("Shutdown", `Failed to close PostgreSQL connection: ${err.message}`);
   }
 
   process.exit(0);
 }
 
-process.on(
-  "SIGINT",
-  () =>
-    shutdown("SIGINT"),
-);
+process.on("SIGINT", () => shutdown("SIGINT"));
 
-process.on(
-  "SIGTERM",
-  () =>
-    shutdown("SIGTERM"),
-);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // ============================================================================
 // Start

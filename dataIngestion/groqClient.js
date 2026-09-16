@@ -1,7 +1,7 @@
 require('dotenv').config();
 require('dotenv').config({ path: require('path').resolve(__dirname, 'sentiment/.env') });
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY_DESC;
 const GROQ_URL = process.env.GROQ_URL || "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-70b-versatile"; 
 

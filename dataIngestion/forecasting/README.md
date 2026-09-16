@@ -40,29 +40,47 @@ The forecasting engine consumes a normalized `currentSnapshot` and an array of `
 
 ---
 
-## ⚙️ How it Calculates Predictions
+## ⚙️ How it Calculates Predictions & File Architecture
 
-The forecasting process runs in four sequential phases:
+The forecasting process is highly modular and runs in a sequential pipeline orchestrated by `index.js`. Here is a breakdown of what each file does:
 
-### Phase 1: Momentum Calculation (`momentum.js`)
-Calculates the physical momentum of the trend by comparing the `currentSnapshot` against the `previousSnapshot`. It computes `velocityDelta`, `accelerationDelta`, and `influenceDelta`. Crucially, it detects **crossPlatformSpread** if the trend has recently expanded to a new platform.
+- **`index.js` (The Orchestrator)**
+  Acts as the main entry point. It gathers the trend's current metrics and historical snapshots, structures the data, and passes it through the various physics and statistical modules below in a strict sequence to generate the final forecast object.
 
-### Phase 2: Scoring & Extrapolation (`scoring.js`)
-Using the calculated momentum, the engine extrapolates the baseline score. The algorithm scales the predicted score upwards for trends exhibiting high positive velocity and acceleration, and penalizes trends showing negative velocity.
+- **`momentum.js` (The Physics Engine)**
+  Calculates the "physical momentum" of the trend by comparing the current snapshot against the previous snapshot. It computes `velocityDelta` (how fast is it moving?), `accelerationDelta` (is it speeding up or slowing down?), and `influenceDelta`. Crucially, it detects **crossPlatformSpread** if the trend has recently migrated to a new platform.
 
-### Phase 3: Breakout Analysis (`breakout.js`)
-Calculates the probability of a "breakout" event. The logic heavily weights cross-platform spread and extreme acceleration. A trend confined to a single platform requires significantly higher velocity to trigger a high breakout probability compared to a trend spreading across multiple platforms simultaneously.
+- **`scoring.js` (The Extrapolator)**
+  Takes the raw momentum and uses our core heuristic algorithm to extrapolate a baseline predicted score. It scales the score upwards for trends exhibiting high positive velocity/acceleration, and aggressively penalizes trends showing negative velocity (burnout).
 
-### Phase 4: Statistical Validation (`statistics.js` & `confidence.js`)
-Generates Z-Scores based on the trend's historical mean and standard deviation. This statistical smoothing ensures that predictions are anchored in reality and prevents brief anomalous data spikes from causing wildly inaccurate forecasts. Finally, it assigns a `confidence` level based on the size of the historical data pool.
+- **`breakout.js` (The Viral Detector)**
+  Calculates the exact probability (0-100%) of a "breakout" event. The logic heavily weights cross-platform spread and extreme acceleration. A trend confined to a single platform requires significantly higher velocity to trigger a high breakout probability compared to a trend spreading across multiple platforms simultaneously. It also categorizes the trajectory direction (e.g., `"rapid_growth"`, `"stable"`, `"decline"`).
+
+- **`statistics.js` (The Smoother & Time-Horizon Predictor)**
+  Prevents brief anomalous data spikes from causing wildly inaccurate forecasts. It generates Z-Scores based on the trend's historical mean and standard deviation. It uses this statistical smoothing to predict exact scores at future time horizons (6h, 12h, 24h).
+
+- **`confidence.js` (The Validator)**
+  Evaluates the statistical confidence of the forecast (`"high"`, `"medium"`, `"low"`). A forecast based on 7 days of rich historical data gets a high confidence rating, whereas a trend discovered 10 minutes ago gets a low confidence rating due to a lack of baseline data.
+
+- **`config.js` & `backtesting.js` (The Tuning & Validation Utilities)**
+  `config.js` holds the weights, thresholds, and mathematical constants used by the engine. `backtesting.js` provides utility functions to compare the engine's past predictions against what actually happened, allowing continuous mathematical tuning of the model.
 
 ---
 
-## 🧠 Why This Approach?
+## 🏆 How to Pitch This to SIH Judges (The "Wow" Factor)
 
-By strictly utilizing mathematical modeling, algorithmic heuristics, and statistical analysis rather than Generative AI (LLMs), the forecasting engine guarantees:
+When presenting this engine to the Smart India Hackathon (SIH) judges, you want to emphasize **Efficiency, Scalability, and Mathematical Rigor**. Do not just call it an "AI Predictor"—frame it as a **Deterministic Physics Engine for Social Data**. 
 
-1. **Deterministic Accuracy**: The same inputs will consistently yield the exact same forecast.
-2. **Zero Latency**: Eliminates the HTTP overhead and generation time associated with LLM inference, allowing thousands of trends to be forecasted in milliseconds.
-3. **No Rate Limits**: Completely circumvents API quotas and third-party throttling, enabling infinite horizontal scaling alongside BullMQ.
-4. **Cost Efficiency**: Reduces cloud infrastructure overhead by processing forecasts locally on CPU.
+Here are the key talking points to impress them:
+
+### 1. "We didn't just wrap an LLM API; we built a Math-driven Engine."
+> *"Judges, while it’s easy to send data to an LLM and ask for a prediction, doing so is slow, expensive, and non-deterministic. We built a custom forecasting engine from scratch using physics concepts—velocity, acceleration, and momentum. Our engine predicts virality using pure mathematics and Z-score statistics."*
+
+### 2. "Zero-Latency and Infinite Scalability"
+> *"Because this engine runs locally on pure CPU logic and doesn't wait on third-party AI APIs, our latency is effectively zero. We can forecast the trajectory of 10,000 active trends in milliseconds. This is crucial for a real-time OSINT/Threat-intelligence platform where every second counts."*
+
+### 3. "Cross-Platform Infection Modeling"
+> *"Our breakout algorithm is uniquely designed for the modern internet. It doesn't just look at how fast a trend is growing; it specifically detects 'cross-platform spread'. Our engine knows that a trend spreading from X (Twitter) to Reddit is significantly more dangerous and viral than a trend isolated to just one platform, and it weights the breakout probability accordingly."*
+
+### 4. "Self-Aware Confidence Scoring"
+> *"Most predictive models suffer from hallucinations or overconfidence on new data. Our model is self-aware. By calculating standard deviation over a historical timeline, it explicitly tells the user its 'Confidence Level'. If a trend just started 10 minutes ago, the engine tells the user 'Low Confidence', preventing the system from overreacting to anomalies."*
