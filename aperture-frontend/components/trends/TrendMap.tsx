@@ -103,6 +103,25 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
       defs.appendChild(pattern);
     }
 
+    let styleEl = svg.querySelector('style#mapHoverStyle');
+    if (!styleEl) {
+      styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+      styleEl.setAttribute('id', 'mapHoverStyle');
+      styleEl.textContent = `
+        path.map-state {
+          transition: fill 0.2s ease, stroke 0.15s ease, stroke-width 0.15s ease;
+        }
+        path.map-state.in-region {
+          cursor: pointer;
+        }
+        path.map-state.in-region:hover {
+          stroke: #202124 !important;
+          stroke-width: 2.5px !important;
+        }
+      `;
+      svg.prepend(styleEl);
+    }
+
     const paths = svg.querySelectorAll('path');
     paths.forEach(p => {
       const id = p.getAttribute('name') || p.getAttribute('title') || p.getAttribute('id');
@@ -120,34 +139,53 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
       if (isSelected) fill = C.yellow;
       if (isOrigin && inRegion) fill = 'url(#checkPattern)';
 
-      p.setAttribute('fill', fill);
-      p.setAttribute('stroke', isOrigin ? '#f9ab00' : '#ffffff');
-      p.setAttribute('stroke-width', isOrigin ? '2.5' : '1.5');
-      p.style.cursor = inRegion ? 'pointer' : 'default';
-      p.style.transition = 'fill 0.3s ease, stroke-width 0.2s';
-      if (isOrigin) p.parentNode?.appendChild(p);
-
+      p.classList.add('map-state');
       if (inRegion) {
-        p.addEventListener('mouseenter', (ev) => {
-          p.setAttribute('stroke', '#202124');
-          p.setAttribute('stroke-width', '3');
-          p.parentNode?.appendChild(p);
-          const hostRect = host.getBoundingClientRect();
-          setTip({
-            html: `<p class="font-bold text-white mb-0.5">${sName} ${isOrigin ? '<span class="text-[#fbbc04] ml-1">(Origin)</span>' : ''}</p><p class="text-gray-400">Relevance score: <span class="text-white font-medium">${score}</span></p>`,
-            x: ev.clientX - hostRect.left,
-            y: ev.clientY - hostRect.top
-          });
+        p.classList.add('in-region');
+        p.setAttribute('data-sname', sName);
+        p.setAttribute('data-score', String(score));
+        if (isOrigin) p.setAttribute('data-origin', 'true');
+      } else {
+        p.classList.remove('in-region');
+        p.removeAttribute('data-sname');
+        p.removeAttribute('data-score');
+        p.removeAttribute('data-origin');
+      }
+
+      p.setAttribute('fill', fill);
+      p.setAttribute('stroke', isOrigin ? '#f9ab00' : isSelected ? '#1a73e8' : '#ffffff');
+      p.setAttribute('stroke-width', isOrigin || isSelected ? '2.5' : '1.5');
+      if (isOrigin) p.parentNode?.appendChild(p);
+    });
+
+    svg.addEventListener('mousemove', (ev) => {
+      const target = (ev.target as Element)?.closest('path.map-state.in-region');
+      if (target) {
+        const sName = target.getAttribute('data-sname');
+        const score = target.getAttribute('data-score');
+        const isOrigin = target.getAttribute('data-origin') === 'true';
+        const hostRect = host.getBoundingClientRect();
+        setTip({
+          html: `<p class="font-bold text-white mb-0.5">${sName} ${isOrigin ? '<span class="text-[#fbbc04] ml-1">(Origin)</span>' : ''}</p><p class="text-gray-400">Relevance score: <span class="text-white font-medium">${score}</span></p>`,
+          x: ev.clientX - hostRect.left,
+          y: ev.clientY - hostRect.top
         });
-        p.addEventListener('mouseleave', () => {
-          p.setAttribute('stroke', isOrigin ? '#f9ab00' : '#ffffff');
-          p.setAttribute('stroke-width', isOrigin ? '2.5' : '1.5');
-          if (isOrigin) p.parentNode?.appendChild(p);
-          setTip(null);
-        });
-        p.addEventListener('click', () => {
-          setSelectedState(isSelected ? null : sName);
-        });
+      } else {
+        setTip(null);
+      }
+    });
+
+    svg.addEventListener('mouseleave', () => {
+      setTip(null);
+    });
+
+    svg.addEventListener('click', (ev) => {
+      const target = (ev.target as Element)?.closest('path.map-state.in-region');
+      if (target) {
+        const sName = target.getAttribute('data-sname');
+        if (sName) {
+          setSelectedState(selectedState === sName ? null : sName);
+        }
       }
     });
 

@@ -7,6 +7,7 @@ import { TrendMap } from "./TrendMap";
 import { TrendNetwork } from "./TrendNetwork";
 import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf } from "@/lib/data";
 import { useEffect, useState } from "react";
+import { PlatformIcon } from "./PlatformIcon";
 
 export function TrendArticle({
   topic,
@@ -30,7 +31,11 @@ export function TrendArticle({
   useEffect(() => {
     // Generate Feed
     const r = rng(hash(topic.id + range + "feed"));
-    const platforms = [ {n:'X', c:'#000'}, {n:'Reddit', c:'#FF4500'}, {n:'Insta', c:'#E1306C'} ];
+    const platforms = [
+      { id: "x", n: "X", c: "#000000" },
+      { id: "reddit", n: "Reddit", c: "#FF4500" },
+      { id: "telegram", n: "Telegram", c: "#24A1DE" },
+    ];
     const f = [];
     for(let i=0; i<12; i++) {
       const emoKeys = Object.keys(topic.emo);
@@ -167,12 +172,7 @@ export function TrendArticle({
             {feed.map((f) => (
               <div key={f.id} className="p-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div 
-                    className="w-[22px] h-[22px] rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                    style={{ background: f.plat.c }}
-                  >
-                    {f.plat.n.charAt(0)}
-                  </div>
+                  <PlatformIcon platform={f.plat.id || f.plat.n} size="sm" />
                   <span className="text-[13px] font-bold text-gray-900">
                     @user_{f.userId}
                   </span>

@@ -1,4 +1,4 @@
-export type Platform = "X" | "Instagram" | "Reddit" | "Telegram";
+export type Platform = "X" | "Reddit" | "Telegram";
 export type Emotion = "Excitement" | "Supportive" | "Anxiety" | "Sarcasm" | "Against" | "Neutral";
 
 export type Trend = {

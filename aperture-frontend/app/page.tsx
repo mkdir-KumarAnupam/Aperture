@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { NavBar } from "@/components/NavBar";
 import { TOPICS, wavePath, fmt } from "@/lib/data";
+import { PlatformIcon } from "@/components/trends/PlatformIcon";
 
 export default function Home() {
   const router = useRouter();
@@ -113,7 +114,7 @@ export default function Home() {
               right now
             </h1>
             <p className="mt-5 max-w-sm text-[15px] text-gray-500 leading-relaxed">
-              Mentions, emotion and influence across X, Telegram, Instagram, Facebook, Reddit and YouTube — read together, in one place.
+              Mentions, emotion and influence across X, Reddit, and Telegram — read together, in one place.
             </p>
           </div>
 
@@ -198,27 +199,13 @@ export default function Home() {
                   href={`/trends?topic=${topic.id}`}
                   className="interactive-card bg-white rounded-xl border border-gray-100 shadow-sm p-3.5 flex items-start space-x-4 cursor-pointer"
                 >
-                  <div
-                    className="flex flex-shrink-0 justify-center items-center rounded-lg w-[64px] h-[64px] text-white shadow-sm"
-                    style={{ background: p.c }}
-                  >
-                    {p.tag === "X" && (
-                      <svg className="w-6 h-6 fill-white" viewBox="0 0 24 24" aria-label="X">
-                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                      </svg>
-                    )}
-                    {p.tag === "TG" && (
-                      <svg className="w-7 h-7 fill-white translate-x-[-1px]" viewBox="0 0 24 24" aria-label="Telegram">
-                        <path d="m20.665 3.717-17.73 6.837c-1.21.486-1.203 1.161-.222 1.462l4.552 1.42 10.532-6.645c.498-.303.953-.14.579.192l-8.533 7.701h-.002l-.313 4.693c.46 0 .663-.211.921-.46l2.211-2.15 4.599 3.397c.848.467 1.457.227 1.668-.785l3.019-14.228c.309-1.239-.473-1.8-1.282-1.434z" />
-                      </svg>
-                    )}
-                    {p.tag === "RD" && (
-                      <svg className="w-7 h-7 fill-white" viewBox="0 0 24 24" aria-label="Reddit">
-                        <path d="M22 12c0-1.1-.9-2-2-2-.41 0-.79.13-1.11.34-1.34-.94-3.15-1.55-5.16-1.64l1.07-5.02 3.5.74c.03.82.7 1.48 1.52 1.48 1.1 0 2-.9 2-2s-.9-2-2-2c-.84 0-1.53.52-1.82 1.25l-3.92-.83a.475.475 0 0 0-.55.37l-1.2 5.65c-2.06.07-3.92.68-5.28 1.63-.32-.22-.71-.35-1.13-.35-1.1 0-2 .9-2 2 0 .76.43 1.42 1.06 1.76-.04.28-.06.56-.06.85 0 3.86 4.03 7 9 7s9-3.14 9-7c0-.29-.02-.57-.06-.85.63-.34 1.06-1 1.06-1.76zm-14.5 2c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5.67-1.5 1.5-1.5zm8.93 4.29c-.77.77-2.04 1.08-3.43 1.08s-2.66-.31-3.43-1.08a.5.5 0 0 1 .71-.71c.56.56 1.58.79 2.72.79s2.16-.23 2.72-.79a.5.5 0 0 1 .71.71zm-.93-2.79c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
-                      </svg>
-                    )}
-                    {!["X", "TG", "RD"].includes(p.tag) && p.tag}
-                  </div>
+                  <PlatformIcon
+                    platform={p.tag || p.src}
+                    size="xl"
+                    shape="rounded"
+                    customBg={p.c}
+                    className="shadow-sm"
+                  />
                   <div className="flex flex-col justify-between pt-0.5 pb-1 min-w-0">
                     <h3 className="font-medium text-[#202124] text-sm leading-snug card-title">{p.t}</h3>
                     <p className="mt-2 text-[#5f6368] text-[11px]">{p.ago} · {p.src}</p>
