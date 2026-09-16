@@ -11,20 +11,35 @@ function face(score: number) {
 
 export function TrendEmotions({ topic }: { topic: any }) {
   const [tip, setTip] = useState<{ e: any; x: number; y: number } | null>(null);
-  const [isVisible, setIsVisible] = useState(false);
+  const [animKey, setAnimKey] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setAnimKey((prev) => prev + 1);
+
     const obs = new IntersectionObserver(([e]) => {
       if (e.isIntersecting) {
-        setIsVisible(true);
-        obs.disconnect();
+        setAnimKey((prev) => prev + 1);
       }
-    }, { threshold: 0.2 });
+    }, { threshold: 0.1 });
     if (containerRef.current) obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-  
+
+    const parentSection = containerRef.current?.closest("section");
+    let mutObs: MutationObserver | null = null;
+    if (parentSection) {
+      mutObs = new MutationObserver(() => {
+        if (parentSection.classList.contains("active-slide")) {
+          setAnimKey((prev) => prev + 1);
+        }
+      });
+      mutObs.observe(parentSection, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    return () => {
+      obs.disconnect();
+      if (mutObs) mutObs.disconnect();
+    };
+  }, [topic.id]);
   
   const polarity = () => {
     const s = (topic.emo.excitement + topic.emo.supportive + topic.emo.neutral * 0.5) / 100 * 5 + (topic.emo.against + topic.emo.anxiety) / 100 * -1.1 + 1.4;
@@ -60,15 +75,14 @@ export function TrendEmotions({ topic }: { topic: any }) {
               <div className="grid grid-cols-5 gap-1.5 w-full mb-3">
                 {Array.from({ length: 20 }).map((_, k) => {
                   const isFilled = k < filled;
-                  const delay = (idx * 75) + (k * 20);
+                  const delay = (idx * 40) + (k * 15);
                   return (
                     <span
-                      key={k}
+                      key={`${animKey}-${k}`}
                       className="w-full aspect-square rounded-[3px] waffle-sq"
                       style={{
                         background: isFilled ? e.c : '#f1f3f4',
-                        animation: isVisible ? `popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both` : 'none',
-                        opacity: isVisible ? undefined : 0
+                        animation: isFilled ? `popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both` : 'none',
                       }}
                     />
                   );

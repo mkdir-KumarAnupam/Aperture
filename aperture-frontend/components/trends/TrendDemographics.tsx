@@ -15,11 +15,26 @@ export function TrendDemographics({ topic }: { topic: any }) {
     const obs = new IntersectionObserver(([e]) => {
       if (e.isIntersecting) {
         setMounted(true);
-        obs.disconnect();
       }
     }, { threshold: 0.1 });
     if (containerRef.current) obs.observe(containerRef.current);
-    return () => obs.disconnect();
+
+    const parentSection = containerRef.current?.closest("section");
+    let mutObs: MutationObserver | null = null;
+    if (parentSection) {
+      mutObs = new MutationObserver(() => {
+        if (parentSection.classList.contains("active-slide")) {
+          setMounted(false);
+          setTimeout(() => setMounted(true), 50);
+        }
+      });
+      mutObs.observe(parentSection, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    return () => {
+      obs.disconnect();
+      if (mutObs) mutObs.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -60,7 +75,6 @@ export function TrendDemographics({ topic }: { topic: any }) {
   }, [topic.id]);
 
   const maxLang = langsData.reduce((prev, current) => (prev && prev.pct > current.pct) ? prev : current, langsData[0]);
-  const maxAgePct = agesData.length > 0 ? Math.max(...agesData.map(d => d.pct)) : 0;
   
 
   return (
@@ -69,22 +83,23 @@ export function TrendDemographics({ topic }: { topic: any }) {
       {/* Top half: 2 cols */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-14 pb-10">
         {/* Ages */}
-        <div className="flex flex-col h-full justify-between">
-          <h3 className="text-[12px] font-bold text-[#80868b] uppercase tracking-[0.15em] mb-6 flex items-center gap-2">
-            <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-            Age Demographics
+        <div className="flex flex-col h-full">
+          <h3 className="text-[12px] font-bold text-[#80868b] uppercase tracking-[0.15em] mb-6">
+            Age Bracket Estimates
           </h3>
-          <div className="flex items-end justify-between h-[160px] stagger px-1">
+          <div className="space-y-4">
             {agesData.map((d, i) => (
-              <div key={i} className="flex flex-col items-center group h-full justify-end flex-1">
-                <span className="text-[12px] font-bold tnum mb-3 text-gray-700">{d.pct}%</span>
-                <div className="w-full max-w-[36px] bg-[#f8f9fa] rounded-xl h-[100px] flex flex-col justify-end p-0 shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)]">
+              <div key={i}>
+                <div className="flex justify-between mb-1.5 font-bold text-[11px] text-gray-600">
+                  <span>{d.label}</span>
+                  <span className="tnum">{d.pct}%</span>
+                </div>
+                <div className="bg-[#f1f3f4] rounded-full w-full h-2 overflow-hidden">
                   <div 
-                    className="w-full rounded-xl transition-all duration-1000 ease-out bg-[#3b82f6] hover:bg-[#2563eb]" 
-                    style={{ height: `${mounted && maxAgePct > 0 ? (d.pct / maxAgePct) * 100 : 0}%` }}
+                    className="bg-[#1a73e8] rounded-full h-2 transition-all duration-1000 ease-out" 
+                    style={{ width: `${mounted ? d.pct : 0}%` }}
                   ></div>
                 </div>
-                <span className="text-[11px] font-medium text-center mt-3 text-gray-500 whitespace-nowrap">{d.label}</span>
               </div>
             ))}
           </div>
@@ -122,7 +137,7 @@ export function TrendDemographics({ topic }: { topic: any }) {
                 <span className="text-[10px] font-bold text-[#80868b] uppercase tracking-wider">{hoveredLang || maxLang?.label}</span>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-y-3 flex-grow ml-2">
+            <div className="grid grid-cols-1 gap-y-3 w-full max-w-[200px] ml-2">
               {langsData.map((d, i) => (
                 <div 
                   key={i} 
@@ -132,11 +147,11 @@ export function TrendDemographics({ topic }: { topic: any }) {
                     hoveredLang === d.label ? 'bg-gray-50' : 'hover:bg-gray-50/50'
                   }`}
                 >
-                  <div className="flex items-center gap-3 font-medium text-[#5f6368]">
-                    <span className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ background: d.c }}></span>
+                  <div className="flex items-center gap-2.5 font-medium text-[#5f6368]">
+                    <span className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ background: d.c }}></span>
                     <span className={hoveredLang === d.label ? 'text-gray-900 font-semibold' : ''}>{d.label}</span>
                   </div>
-                  <div className={`font-bold tnum ${hoveredLang === d.label ? 'text-gray-900' : 'text-[#3c4043]'}`}>{d.pct}%</div>
+                  <div className={`font-bold tnum pl-4 ${hoveredLang === d.label ? 'text-gray-900' : 'text-[#3c4043]'}`}>{d.pct}%</div>
                 </div>
               ))}
             </div>
