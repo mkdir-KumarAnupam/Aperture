@@ -29,7 +29,7 @@
  *      ↓
  *   Trend Snapshot
  *      ↓
- *   Analytics Snapshot Data
+ *   Dedicated Analytics Snapshots
  *
  * ============================================================================
  */
@@ -51,8 +51,6 @@ const {
   googleTrendTimeLine,
 } = require("./demographicAnaylysis.js");
 
-
-
 const {
   recordTrendStats,
   enrichWithGlobalRanking,
@@ -63,6 +61,10 @@ const { analyzeNetwork } = require("./networkAnalysis");
 const {
   generateForecast,
 } = require("./forecasting/index");
+
+const {
+  generateTrendDescription,
+} = require("./groqClient");
 
 // ============================================================================
 // Configuration
@@ -113,7 +115,8 @@ async function loadSentimentPipeline() {
     );
   }
 
-  analyzeBatch = sentimentPipeline.analyzeBatch;
+  analyzeBatch =
+    sentimentPipeline.analyzeBatch;
 
   console.log(
     "[Startup] Sentiment pipeline loaded successfully.",
@@ -141,10 +144,20 @@ function error(worker, message) {
 // ============================================================================
 
 function getCanonicalData(job) {
-  if (!job?.data || typeof job.data !== "object") {
-    throw new Error("Job data is missing or invalid.");
+  if (
+    !job?.data ||
+    typeof job.data !== "object"
+  ) {
+    throw new Error(
+      "Job data is missing or invalid.",
+    );
   }
 
+  /*
+   * Analytics child job:
+   *
+   *   job.data = canonical
+   */
   if (
     job.data.schemaVersion &&
     job.data.collection &&
@@ -153,6 +166,11 @@ function getCanonicalData(job) {
     return job.data;
   }
 
+  /*
+   * Database parent job:
+   *
+   *   job.data.canonical = canonical
+   */
   if (
     job.data.canonical &&
     typeof job.data.canonical === "object"
@@ -170,11 +188,19 @@ function getCanonicalData(job) {
 // ============================================================================
 
 function validateCanonicalData(data) {
-  if (!data || typeof data !== "object") {
-    throw new Error("Canonical data is missing or invalid.");
+  if (
+    !data ||
+    typeof data !== "object"
+  ) {
+    throw new Error(
+      "Canonical data is missing or invalid.",
+    );
   }
 
-  if (data.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
+  if (
+    data.schemaVersion !==
+    SUPPORTED_SCHEMA_VERSION
+  ) {
     throw new Error(
       `Unsupported schemaVersion '${data.schemaVersion}'. ` +
       `Expected '${SUPPORTED_SCHEMA_VERSION}'.`,
@@ -186,15 +212,24 @@ function validateCanonicalData(data) {
     typeof data.collection !== "object" ||
     !data.collection.collectionId
   ) {
-    throw new Error("Missing collection.collectionId.");
+    throw new Error(
+      "Missing collection.collectionId.",
+    );
   }
 
-  if (!data.trend || typeof data.trend !== "object") {
-    throw new Error("Missing canonical trend object.");
+  if (
+    !data.trend ||
+    typeof data.trend !== "object"
+  ) {
+    throw new Error(
+      "Missing canonical trend object.",
+    );
   }
 
   if (!Array.isArray(data.events)) {
-    throw new Error("Canonical events must be an array.");
+    throw new Error(
+      "Canonical events must be an array.",
+    );
   }
 
   if (
@@ -234,7 +269,10 @@ function validateEvents(events) {
   const eventIds = new Set();
 
   for (const event of events) {
-    if (!event || typeof event !== "object") {
+    if (
+      !event ||
+      typeof event !== "object"
+    ) {
       throw new Error(
         "Canonical events contain an invalid event.",
       );
@@ -288,7 +326,8 @@ function validateCollection(data) {
 
   if (
     data.quality &&
-    typeof data.quality.recordsCollected === "number"
+    typeof data.quality.recordsCollected ===
+    "number"
   ) {
     if (
       data.quality.recordsCollected !==
@@ -318,12 +357,15 @@ function getTrendLabel(data) {
 }
 
 function getPlatformCounts(events) {
-  return events.reduce((counts, event) => {
-    counts[event.platform] =
-      (counts[event.platform] || 0) + 1;
+  return events.reduce(
+    (counts, event) => {
+      counts[event.platform] =
+        (counts[event.platform] || 0) + 1;
 
-    return counts;
-  }, {});
+      return counts;
+    },
+    {},
+  );
 }
 
 // ============================================================================
@@ -421,8 +463,12 @@ function cleanForJson(value) {
   ) {
     const result = {};
 
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = cleanForJson(child);
+    for (
+      const [key, child]
+      of Object.entries(value)
+    ) {
+      result[key] =
+        cleanForJson(child);
     }
 
     return result;
@@ -433,7 +479,9 @@ function cleanForJson(value) {
 
 function json(value) {
   return JSON.stringify(
-    cleanForJson(value ?? null),
+    cleanForJson(
+      value ?? null,
+    ),
   );
 }
 
@@ -478,57 +526,60 @@ async function ensurePostgresConnection() {
     return postgresConnectionPromise;
   }
 
-  const connectionAttempt = (async () => {
-    let healthy = false;
+  const connectionAttempt =
+    (async () => {
+      let healthy = false;
 
-    try {
-      healthy = await checkPostgres();
-    } catch (err) {
+      try {
+        healthy =
+          await checkPostgres();
+      } catch (err) {
+        if (shuttingDown) {
+          throw new Error(
+            "PostgreSQL connection check aborted because shutdown is in progress.",
+          );
+        }
+
+        log(
+          "Database",
+          `PostgreSQL health check failed: ${err.message}`,
+        );
+
+        healthy = false;
+      }
+
       if (shuttingDown) {
         throw new Error(
-          "PostgreSQL connection check aborted because shutdown is in progress.",
+          "PostgreSQL reconnect aborted because shutdown is in progress.",
         );
+      }
+
+      if (healthy) {
+        return;
       }
 
       log(
         "Database",
-        `PostgreSQL health check failed: ${err.message}`,
+        "PostgreSQL connection stale — reconnecting...",
       );
 
-      healthy = false;
-    }
+      if (shuttingDown) {
+        throw new Error(
+          "PostgreSQL reconnect aborted because shutdown is in progress.",
+        );
+      }
 
-    if (shuttingDown) {
-      throw new Error(
-        "PostgreSQL reconnect aborted because shutdown is in progress.",
-      );
-    }
+      await connectPostgres();
 
-    if (healthy) {
-      return;
-    }
+      if (shuttingDown) {
+        throw new Error(
+          "PostgreSQL connection established during shutdown.",
+        );
+      }
+    })();
 
-    log(
-      "Database",
-      "PostgreSQL connection stale — reconnecting...",
-    );
-
-    if (shuttingDown) {
-      throw new Error(
-        "PostgreSQL reconnect aborted because shutdown is in progress.",
-      );
-    }
-
-    await connectPostgres();
-
-    if (shuttingDown) {
-      throw new Error(
-        "PostgreSQL connection established during shutdown.",
-      );
-    }
-  })();
-
-  postgresConnectionPromise = connectionAttempt;
+  postgresConnectionPromise =
+    connectionAttempt;
 
   try {
     await connectionAttempt;
@@ -537,7 +588,8 @@ async function ensurePostgresConnection() {
       postgresConnectionPromise ===
       connectionAttempt
     ) {
-      postgresConnectionPromise = null;
+      postgresConnectionPromise =
+        null;
     }
   }
 }
@@ -576,7 +628,9 @@ function resolveCollectionTimestamp(data) {
   );
 }
 
-function resolveCollectionCompletedAt(data) {
+function resolveCollectionCompletedAt(
+  data,
+) {
   return (
     data?.collection?.completedAt ??
     data?.collection?.completed_at ??
@@ -594,7 +648,9 @@ function resolveCollectorVersion(data) {
   );
 }
 
-function resolveCollectionObservedAt(data) {
+function resolveCollectionObservedAt(
+  data,
+) {
   return (
     data?.collection?.observedAt ??
     data?.collection?.observed_at ??
@@ -602,16 +658,24 @@ function resolveCollectionObservedAt(data) {
   );
 }
 
-function calculatePrimaryEventCount(data) {
+function calculatePrimaryEventCount(
+  data,
+) {
   return data.events.length;
 }
 
-function calculateRelationshipCount(data) {
+function calculateRelationshipCount(
+  data,
+) {
   let count = 0;
 
-  const platforms = data?.platforms ?? {};
+  const platforms =
+    data?.platforms ?? {};
 
-  for (const platformData of Object.values(platforms)) {
+  for (
+    const platformData
+    of Object.values(platforms)
+  ) {
     count += Number(
       platformData?.pagination
         ?.relationshipRecordsCollected ??
@@ -635,14 +699,20 @@ function resolvePlatformStatus(data) {
   return {};
 }
 
-function resolveCollectionQuality(data) {
+function resolveCollectionQuality(
+  data,
+) {
   return data?.quality ?? {};
 }
 
-function resolveCollectionDiagnostics(data) {
+function resolveCollectionDiagnostics(
+  data,
+) {
   const diagnostics = {};
 
-  if (data?.diagnostics !== undefined) {
+  if (
+    data?.diagnostics !== undefined
+  ) {
     diagnostics.collection =
       data.diagnostics;
   }
@@ -657,12 +727,17 @@ function resolveCollectionDiagnostics(data) {
       const [
         platform,
         platformData,
-      ] of Object.entries(data.platforms)
+      ] of Object.entries(
+        data.platforms,
+      )
     ) {
       if (
-        platformData?.diagnostics !== undefined
+        platformData?.diagnostics !==
+        undefined
       ) {
-        diagnostics.platforms[platform] =
+        diagnostics.platforms[
+          platform
+        ] =
           platformData.diagnostics;
       }
     }
@@ -685,19 +760,28 @@ function extractEventAuthorId(event) {
 }
 
 function extractEventText(event) {
-  return event?.content?.text ?? null;
+  return (
+    event?.content?.text ??
+    null
+  );
 }
 
-function extractContentFingerprint(event) {
+function extractContentFingerprint(
+  event,
+) {
   return (
-    event?.content?.contentFingerprint ??
+    event?.content
+      ?.contentFingerprint ??
     event?.contentFingerprint ??
     null
   );
 }
 
 function extractPublishedAt(event) {
-  return event?.time?.publishedAt ?? null;
+  return (
+    event?.time?.publishedAt ??
+    null
+  );
 }
 
 function extractObservedAt(event) {
@@ -708,15 +792,24 @@ function extractObservedAt(event) {
 }
 
 function extractEditedAt(event) {
-  return event?.time?.editedAt ?? null;
+  return (
+    event?.time?.editedAt ??
+    null
+  );
 }
 
 function extractTitle(event) {
-  return event?.content?.title ?? null;
+  return (
+    event?.content?.title ??
+    null
+  );
 }
 
 function extractLanguage(event) {
-  return event?.content?.language ?? null;
+  return (
+    event?.content?.language ??
+    null
+  );
 }
 
 function extractDetectedLanguage(event) {
@@ -727,10 +820,14 @@ function extractDetectedLanguage(event) {
   );
 }
 
-function extractLanguageConfidence(event) {
+function extractLanguageConfidence(
+  event,
+) {
   return (
-    event?.content?.languageDetectionConfidence ??
-    event?.content?.languageDetectConfidence ??
+    event?.content
+      ?.languageDetectionConfidence ??
+    event?.content
+      ?.languageDetectConfidence ??
     null
   );
 }
@@ -771,7 +868,9 @@ function extractAttachments(event) {
 // SNAPSHOT METRICS
 // ============================================================================
 
-function calculateSnapshotMetrics(events) {
+function calculateSnapshotMetrics(
+  events,
+) {
   let likes = 0;
   let replies = 0;
   let reposts = 0;
@@ -852,7 +951,8 @@ function calculateSnapshotMetrics(events) {
         new Date(publishedAt) >
         new Date(latestEventAt)
       ) {
-        latestEventAt = publishedAt;
+        latestEventAt =
+          publishedAt;
       }
     }
   }
@@ -1251,14 +1351,18 @@ async function upsertAuthor(event) {
     null;
 
   const followerCount =
-    event?.platformData?.authorFollowers ??
-    event?.author?.profile?.followers ??
+    event?.platformData
+      ?.authorFollowers ??
+    event?.author?.profile
+      ?.followers ??
     event?.author?.followers ??
     null;
 
   const verified =
-    event?.platformData?.authorVerified ??
-    event?.author?.profile?.verified ??
+    event?.platformData
+      ?.authorVerified ??
+    event?.author?.profile
+      ?.verified ??
     event?.author?.verified ??
     null;
 
@@ -1268,8 +1372,10 @@ async function upsertAuthor(event) {
 
   const profileImageUrl =
     event?.author?.profileImageUrl ??
-    event?.author?.profile?.imageUrl ??
-    event?.author?.profile?.profileImageUrl ??
+    event?.author?.profile
+      ?.imageUrl ??
+    event?.author?.profile
+      ?.profileImageUrl ??
     null;
 
   const profileUrl =
@@ -1279,7 +1385,8 @@ async function upsertAuthor(event) {
 
   const accountCreatedAt =
     event?.author?.accountCreatedAt ??
-    event?.author?.profile?.createdAt ??
+    event?.author?.profile
+      ?.createdAt ??
     null;
 
   const query = `
@@ -1432,7 +1539,10 @@ async function upsertEvent(
   event,
   collectionId,
 ) {
-  if (!event || typeof event !== "object") {
+  if (
+    !event ||
+    typeof event !== "object"
+  ) {
     throw new Error(
       "Cannot persist invalid event.",
     );
@@ -1541,9 +1651,12 @@ async function upsertEvent(
   // --------------------------------------------------------------------------
 
   const bookmarks =
-    engagement.bookmarks === null ||
-      engagement.bookmarks === undefined ||
-      engagement.bookmarks === ""
+    engagement.bookmarks ===
+      null ||
+      engagement.bookmarks ===
+      undefined ||
+      engagement.bookmarks ===
+      ""
       ? null
       : toSafeInteger(
         engagement.bookmarks,
@@ -1551,9 +1664,12 @@ async function upsertEvent(
       );
 
   const impressions =
-    engagement.impressions === null ||
-      engagement.impressions === undefined ||
-      engagement.impressions === ""
+    engagement.impressions ===
+      null ||
+      engagement.impressions ===
+      undefined ||
+      engagement.impressions ===
+      ""
       ? null
       : toSafeInteger(
         engagement.impressions,
@@ -1683,13 +1799,6 @@ async function upsertEvent(
       $17,
       $18,
 
-      /*
-       * Database-level defense:
-       *
-       * These columns are NOT NULL in the schema.
-       * Even if a future code path passes null,
-       * PostgreSQL receives 0.
-       */
       COALESCE($19, 0),
       COALESCE($20, 0),
       COALESCE($21, 0),
@@ -1801,9 +1910,6 @@ async function upsertEvent(
           events.attachments
         ),
 
-      /*
-       * Required engagement fields.
-       */
       likes =
         EXCLUDED.likes,
 
@@ -1816,9 +1922,6 @@ async function upsertEvent(
       quotes =
         EXCLUDED.quotes,
 
-      /*
-       * Nullable engagement fields.
-       */
       bookmarks =
         COALESCE(
           EXCLUDED.bookmarks,
@@ -1922,123 +2025,54 @@ async function upsertEvent(
   `;
 
   const values = [
-    // $1
     event.eventId,
-
-    // $2
     event.platform,
-
-    // $3
     event.platformPostId,
-
-    // $4
     collectionId,
-
-    // $5
     authorDbId,
-
-    // $6
     extractPublishedAt(event),
-
-    // $7
     extractObservedAt(event),
-
-    // $8
     extractEditedAt(event),
-
-    // $9
     extractEventText(event),
-
-    // $10
     extractTitle(event),
-
-    // $11
     extractLanguage(event),
-
-    // $12
     extractDetectedLanguage(event),
-
-    // $13
     extractLanguageConfidence(event),
-
-    // $14
     extractContentFingerprint(event),
-
-    // $15
     json(extractHashtags(event)),
-
-    // $16
     json(extractMentions(event)),
-
-    // $17
     json(extractUrls(event)),
-
-    // $18
     json(extractAttachments(event)),
-
-    // $19
     likes,
-
-    // $20
     replies,
-
-    // $21
     reposts,
-
-    // $22
     quotes,
-
-    // $23
     bookmarks,
-
-    // $24
     views,
-
-    // $25
     impressions,
-
-    // $26
-    relationships.replyToId ?? null,
-
-    // $27
-    relationships.replyToAuthorId ?? null,
-
-    // $28
-    relationships.quoteOfId ?? null,
-
-    // $29
+    relationships.replyToId ??
+    null,
+    relationships.replyToAuthorId ??
+    null,
+    relationships.quoteOfId ??
+    null,
     relationships.forwardOfId ??
     relationships.crosspostOfId ??
     null,
-
-    // $30
-    relationships.conversationId ?? null,
-
-    // $31
-    platformData.possiblySensitive ?? null,
-
-    // $32
-    platformData.isEdited ?? null,
-
-    // $33
-    platformData.authorFollowers ?? null,
-
-    // $34
-    platformData.authorVerified ?? null,
-
-    // $35
+    relationships.conversationId ??
+    null,
+    platformData.possiblySensitive ??
+    null,
+    platformData.isEdited ??
+    null,
+    platformData.authorFollowers ??
+    null,
+    platformData.authorVerified ??
+    null,
     json(event),
-
-    // $36
     json(source),
-
-    // $37
     json(retrieval),
-
-    // $38
     json(rawSource),
-
-    // $39
     json(platformData),
   ];
 
@@ -2132,7 +2166,10 @@ async function persistTrendEvents(
   collectionId,
   persistedEvents,
 ) {
-  for (const event of persistedEvents) {
+  for (
+    const event
+    of persistedEvents
+  ) {
     await persistTrendEvent(
       trendId,
       event.databaseId,
@@ -2160,9 +2197,11 @@ async function createTrendSnapshot(
     analytics.trend ?? {};
 
   const rank =
-    trendAnalytics?.globalRanking
+    trendAnalytics
+      ?.globalRanking
       ?.leaderboardPosition ??
-    trendAnalytics?.globalRanking
+    trendAnalytics
+      ?.globalRanking
       ?.rank ??
     null;
 
@@ -2172,7 +2211,8 @@ async function createTrendSnapshot(
     null;
 
   const tier =
-    trendAnalytics?.influence
+    trendAnalytics
+      ?.influence
       ?.viralityTier ??
     trendAnalytics?.tier ??
     null;
@@ -2367,22 +2407,27 @@ async function persistSentimentSnapshot(
 
   const positivePercentage =
     total > 0
-      ? (safePositive / total) * 100
+      ? (safePositive / total) *
+      100
       : 0;
 
   const neutralPercentage =
     total > 0
-      ? (safeNeutral / total) * 100
+      ? (safeNeutral / total) *
+      100
       : 0;
 
   const negativePercentage =
     total > 0
-      ? (safeNegative / total) * 100
+      ? (safeNegative / total) *
+      100
       : 0;
 
   const polarityIndex =
     total > 0
-      ? (safePositive - safeNegative) / total
+      ? (safePositive -
+        safeNegative) /
+      total
       : 0;
 
   const query = `
@@ -2502,14 +2547,18 @@ function buildFallbackAuthorProfiles(
         null,
 
       followerCount:
-        event?.platformData?.authorFollowers ??
-        event?.author?.profile?.followers ??
+        event?.platformData
+          ?.authorFollowers ??
+        event?.author?.profile
+          ?.followers ??
         event?.author?.followers ??
         null,
 
       verified:
-        event?.platformData?.authorVerified ??
-        event?.author?.profile?.verified ??
+        event?.platformData
+          ?.authorVerified ??
+        event?.author?.profile
+          ?.verified ??
         event?.author?.verified ??
         null,
     });
@@ -2711,7 +2760,10 @@ function resolveNetworkEdgePlatform(
     edge?.target,
   ];
 
-  for (const candidate of candidates) {
+  for (
+    const candidate
+    of candidates
+  ) {
     const inferred =
       inferPlatformFromExternalId(
         candidate,
@@ -2722,17 +2774,20 @@ function resolveNetworkEdgePlatform(
     }
   }
 
-  const platforms = new Set(
-    events
-      .map(
-        (event) =>
-          event?.platform,
-      )
-      .filter(Boolean),
-  );
+  const platforms =
+    new Set(
+      events
+        .map(
+          (event) =>
+            event?.platform,
+        )
+        .filter(Boolean),
+    );
 
   if (platforms.size === 1) {
-    return [...platforms][0];
+    return [
+      ...platforms,
+    ][0];
   }
 
   return null;
@@ -2773,7 +2828,10 @@ async function resolveAuthorDbId(
       ],
     );
 
-  return result.rows[0]?.id ?? null;
+  return (
+    result.rows[0]?.id ??
+    null
+  );
 }
 
 async function persistNetworkSnapshot(
@@ -2802,7 +2860,8 @@ async function persistNetworkSnapshot(
       topInfluencerId,
     );
 
-  let topInfluencerAuthorDbId = null;
+  let topInfluencerAuthorDbId =
+    null;
 
   if (
     topInfluencerId &&
@@ -2836,7 +2895,8 @@ async function persistNetworkSnapshot(
         Array.isArray(
           network.communities,
         )
-          ? network.communities.length
+          ? network.communities
+            .length
           : 0
       ),
     );
@@ -3259,7 +3319,8 @@ function createSentimentWorker() {
 
       for (
         let index = 0;
-        index < data.events.length;
+        index <
+        data.events.length;
         index++
       ) {
         const event =
@@ -3277,13 +3338,19 @@ function createSentimentWorker() {
         }
 
         textEntries.push({
-          eventIndex: index,
-          eventId: event.eventId,
+          eventIndex:
+            index,
+
+          eventId:
+            event.eventId,
+
           publishedAt:
             event.time?.publishedAt ??
             null,
+
           platform:
             event.platform,
+
           text:
             text.trim(),
         });
@@ -3391,7 +3458,8 @@ function createSentimentWorker() {
 
       for (
         let i = 0;
-        i < textEntries.length;
+        i <
+        textEntries.length;
         i++
       ) {
         const entry =
@@ -3446,6 +3514,17 @@ function createSentimentWorker() {
           tier:
             prediction.tier ??
             null,
+
+          /*
+           * Optional explanation returned
+           * by newer Tier 2 implementations.
+           *
+           * Does not break the existing
+           * sentiment contract when absent.
+           */
+          reason:
+            prediction.reason ??
+            null,
         });
       }
 
@@ -3474,7 +3553,8 @@ function createSentimentWorker() {
       };
 
       for (
-        const result of results
+        const result
+        of results
       ) {
         const polarity =
           result.polarity?.label;
@@ -3496,8 +3576,8 @@ function createSentimentWorker() {
           )
         ) {
           for (
-            const emotion of
-            result.emotions
+            const emotion
+            of result.emotions
           ) {
             if (
               !emotion?.label
@@ -3669,6 +3749,81 @@ function createSentimentWorker() {
 // 2. DEMOGRAPHIC WORKER
 // ============================================================================
 
+async function runGoogleTrendDemographics(
+  trendLabel,
+) {
+  /*
+   * Google Trends currently provides:
+   *
+   *   - timeline data
+   *   - regional interest
+   *
+   * These are supplementary analytics.
+   *
+   * They are NOT treated as inferred
+   * age/gender demographics.
+   */
+
+  const country = "India";
+
+  const endTime =
+    new Date();
+
+  const startTime =
+    new Date(endTime);
+
+  startTime.setDate(
+    startTime.getDate() - 30,
+  );
+
+  let timelines = null;
+  let regionals = null;
+
+  try {
+    timelines =
+      await googleTrendTimeLine(
+        trendLabel,
+        country,
+        {
+          startTime,
+          endTime,
+        },
+      );
+  } catch (err) {
+    error(
+      "Demographic",
+      `Google Trends timeline failed for '${trendLabel}': ${err.message}`,
+    );
+  }
+
+  try {
+    regionals =
+      await googleTrendRegions(
+        trendLabel,
+        country,
+        {
+          startTime,
+          endTime,
+        },
+      );
+  } catch (err) {
+    error(
+      "Demographic",
+      `Google Trends regional analysis failed for '${trendLabel}': ${err.message}`,
+    );
+  }
+
+  return {
+    timelines,
+    regionals,
+    country,
+    startTime:
+      startTime.toISOString(),
+    endTime:
+      endTime.toISOString(),
+  };
+}
+
 function createDemographicWorker() {
   return new Worker(
     "DemographicQueue",
@@ -3681,10 +3836,6 @@ function createDemographicWorker() {
 
       const trendLabel =
         getTrendLabel(data);
-
-      // ----------------------------------------------------------------------
-      // Author profile availability
-      // ----------------------------------------------------------------------
 
       const explicitProfiles =
         Array.isArray(
@@ -3700,53 +3851,55 @@ function createDemographicWorker() {
             data.events,
           );
 
-      // ----------------------------------------------------------------------
-      // Google Trends context
-      // ----------------------------------------------------------------------
-
-      const country = "India";
-
-      const endTime = new Date();
-
-      const startTime = new Date();
-
-      startTime.setDate(
-        endTime.getDate() - 30,
-      );
-
-      const timelines =
-        await googleTrendTimeLine(
+      /*
+       * Google Trends enhancement
+       */
+      const googleTrends =
+        await runGoogleTrendDemographics(
           trendLabel,
-          country,
-          {
-            startTime,
-            endTime,
-          },
         );
 
-      const regionals =
-        await googleTrendRegions(
-          trendLabel,
-          country,
-          {
-            startTime,
-            endTime,
-          },
-        );
+      const timelineCount =
+        Array.isArray(
+          googleTrends
+            ?.timelines
+            ?.timeline,
+        )
+          ? googleTrends
+            .timelines
+            .timeline
+            .length
+          : 0;
+
+      const regionalCount =
+        Array.isArray(
+          googleTrends
+            ?.regionals
+            ?.regions,
+        )
+          ? googleTrends
+            .regionals
+            .regions
+            .length
+          : 0;
 
       log(
         "Demographic",
         `Processing ${data.events.length} events | ` +
         `Profiles=${profiles.length} | ` +
-        `Trend=${trendLabel} | ` +
-        `TimeLines=${timelines?.timeline?.length ?? 0} | ` +
-        `Regionals=${regionals?.regions?.length ?? 0}`,
+        `TimeLines=${timelineCount} | ` +
+        `Regionals=${regionalCount} | ` +
+        `Trend=${trendLabel}`,
       );
 
-      // ----------------------------------------------------------------------
-      // Result
-      // ----------------------------------------------------------------------
-
+      /*
+       * Demographic inference remains separate
+       * from Google Trends.
+       *
+       * We do NOT infer age/gender from Google
+       * Trends because regional interest is not
+       * demographic ground truth.
+       */
       const result = {
         category:
           "demographic",
@@ -3763,17 +3916,29 @@ function createDemographicWorker() {
         profilesAvailable:
           profiles.length,
 
-        timelines,
+        googleTrends,
 
-        regionals,
+        /*
+         * These remain null until a dedicated
+         * demographic inference model produces
+         * defensible distributions.
+         */
+        ageDistribution:
+          null,
+
+        genderDistribution:
+          null,
+
+        professionalInterests:
+          null,
       };
 
       success(
         "Demographic",
         `Processed ${data.events.length} events | ` +
         `Profiles=${profiles.length} | ` +
-        `TimeLines=${timelines?.timeline?.length ?? 0} | ` +
-        `Regionals=${regionals?.regions?.length ?? 0}.`,
+        `Timeline=${timelineCount} | ` +
+        `Regional=${regionalCount}.`,
       );
 
       return result;
@@ -3792,6 +3957,133 @@ function createDemographicWorker() {
 // ============================================================================
 // 3. TREND WORKER
 // ============================================================================
+
+async function generateCachedTrendDescription(
+  trendLabel,
+  events,
+) {
+  if (
+    !trendLabel ||
+    trendLabel === "unknown"
+  ) {
+    return null;
+  }
+
+  const cacheKey =
+    `trend:desc:${trendLabel}`;
+
+  try {
+    const cached =
+      await localSharedRedis.get(
+        cacheKey,
+      );
+
+    if (cached) {
+      log(
+        "Trend",
+        `Description cache hit for '${trendLabel}'.`,
+      );
+
+      return cached;
+    }
+  } catch (err) {
+    error(
+      "Trend",
+      `Description cache read failed: ${err.message}`,
+    );
+  }
+
+  /*
+   * IMPORTANT:
+   *
+   * Canonical text is:
+   *
+   *   event.content.text
+   *
+   * NOT:
+   *
+   *   event.text
+   */
+  const contextEvents =
+    (events || [])
+      .filter(
+        (event) =>
+          typeof event?.content
+            ?.text === "string" &&
+          event.content.text
+            .trim()
+            .length > 10,
+      )
+      .slice(0, 10)
+      .map(
+        (event) =>
+          `- ${event.content.text
+            .trim()}`,
+      )
+      .join("\n");
+
+  const trendContext =
+    contextEvents.length > 0
+      ? contextEvents
+      : null;
+
+  try {
+    log(
+      "Trend",
+      `Fetching description from Groq for trend: ${trendLabel}`,
+    );
+
+    const description =
+      await generateTrendDescription(
+        trendLabel,
+        trendContext,
+      );
+
+    if (description) {
+      try {
+        /*
+         * Cache for 24 hours.
+         *
+         * This avoids repeatedly spending
+         * Groq requests for the same trend.
+         */
+        await localSharedRedis.setex(
+          cacheKey,
+          60 * 60 * 24,
+          description,
+        );
+
+        log(
+          "Trend",
+          `Description cached for 24h | trend=${trendLabel}`,
+        );
+      } catch (err) {
+        error(
+          "Trend",
+          `Description cache write failed: ${err.message}`,
+        );
+      }
+
+      return description;
+    }
+
+    return null;
+  } catch (err) {
+    /*
+     * Description generation is supplementary.
+     *
+     * Do not fail the entire trend analytics
+     * job just because Groq description
+     * generation failed.
+     */
+    error(
+      "Trend",
+      `Trend description generation failed: ${err.message}`,
+    );
+
+    return null;
+  }
+}
 
 function createTrendWorker() {
   return new Worker(
@@ -3813,6 +4105,10 @@ function createTrendWorker() {
         `Run=${data.collection.collectionId}`,
       );
 
+      // ----------------------------------------------------------------------
+      // Local trend analysis
+      // ----------------------------------------------------------------------
+
       const result =
         analyzeTrend(data);
 
@@ -3826,6 +4122,24 @@ function createTrendWorker() {
         );
       }
 
+      // ----------------------------------------------------------------------
+      // Trend Description
+      // ----------------------------------------------------------------------
+
+      const description =
+        await generateCachedTrendDescription(
+          trendLabel,
+          data.events,
+        );
+
+      result.description =
+        description ||
+        "No description available.";
+
+      // ----------------------------------------------------------------------
+      // Global trend statistics
+      // ----------------------------------------------------------------------
+
       await recordTrendStats(
         localSharedRedis,
         result,
@@ -3836,6 +4150,10 @@ function createTrendWorker() {
           localSharedRedis,
           result,
         );
+
+      // ----------------------------------------------------------------------
+      // Forecasting
+      // ----------------------------------------------------------------------
 
       const history =
         enriched.globalRanking
@@ -3854,6 +4172,10 @@ function createTrendWorker() {
           forecastData,
         ),
       );
+
+      // ----------------------------------------------------------------------
+      // Logging
+      // ----------------------------------------------------------------------
 
       const ranking =
         enriched.globalRanking;
@@ -3880,6 +4202,10 @@ function createTrendWorker() {
       return {
         category:
           "trend",
+
+        description:
+          description ||
+          "No description available.",
 
         ...enriched,
       };
@@ -4109,7 +4435,8 @@ function createDatabaseWorker() {
       const analytics = {};
 
       for (
-        const result of rawValues
+        const result
+        of rawValues
       ) {
         if (
           !result ||
@@ -4430,7 +4757,8 @@ function createDatabaseWorker() {
           resolvedTrendLabel,
 
         collectionId:
-          persistenceResult.collection.id,
+          persistenceResult
+            .collection.id,
 
         collectionSequence:
           persistenceResult
@@ -4439,8 +4767,7 @@ function createDatabaseWorker() {
 
         snapshotId:
           persistenceResult
-            .snapshot
-            .id,
+            .snapshot.id,
 
         schemaVersion:
           resolvedSchemaVersion,
@@ -4551,7 +4878,8 @@ async function startWorkers() {
     ];
 
     for (
-      const worker of workers
+      const worker
+      of workers
     ) {
       registerWorkerEvents(
         worker,
@@ -4600,6 +4928,14 @@ async function startWorkers() {
 
     console.log(
       "Sentiment: loaded",
+    );
+
+    console.log(
+      "Google Trends: enabled",
+    );
+
+    console.log(
+      "Trend descriptions: Groq + Redis cache",
     );
 
     console.log(
