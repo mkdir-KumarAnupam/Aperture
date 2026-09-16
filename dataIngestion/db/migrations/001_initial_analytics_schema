@@ -487,7 +487,6 @@ CREATE TABLE trend_demographic_snapshots (
                             ON DELETE CASCADE,
 
     age_distribution        JSONB,
-    gender_distribution     JSONB,
     professional_interests  JSONB,
 
     data                    JSONB

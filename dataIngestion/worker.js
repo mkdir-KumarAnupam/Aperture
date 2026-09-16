@@ -4848,7 +4848,11 @@ async function startWorkers() {
       return;
     }
 
-    await connectPostgres();
+    let connected = await checkPostgres();
+
+    if(!connected){
+      await connectPostgres();
+    }
 
     if (shuttingDown) {
       return;
