@@ -193,8 +193,8 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
   }, [mapState, mapSvgStr, topic, region, selectedState, zoom, setSelectedState]);
 
   return (
-    <div className="relative w-full min-h-[350px] bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden interactive-card">
-      <div ref={mapRef} className="w-full h-[350px] flex items-center justify-center">
+    <div className="relative w-full min-h-[440px] bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden interactive-card trend-map-card">
+      <div ref={mapRef} className="w-full h-[440px] flex items-center justify-center trend-map-inner">
         {mapState === 'loading' && <p className="text-sm font-medium text-gray-400 animate-pulse">Loading map geometry...</p>}
         {mapState === 'fail' && <p className="text-sm text-gray-400">Map data unavailable.</p>}
       </div>

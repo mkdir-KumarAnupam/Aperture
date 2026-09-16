@@ -141,9 +141,9 @@ export function TrendArticle({
       </section>
 
       {/* 05 — map */}
-      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
+      <section className="reveal in pt-4 border-t border-gray-100/50 slide-panel present-map-panel">
         <div className="marker">5</div>
-        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5 map-header">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Regional distribution</h2>
           {selectedState && (
             <button onClick={() => setSelectedState(null)} className="text-[11px] font-medium text-red-600 bg-red-50 px-2 py-1 rounded hover:bg-red-100 transition-colors">
@@ -151,7 +151,7 @@ export function TrendArticle({
             </button>
           )}
         </div>
-        <p className="text-sm text-gray-500 leading-relaxed mb-6">Relevance score by state for this window. The origin region where the trend primarily started is highlighted in vibrant yellow.</p>
+        <p className="text-sm text-gray-500 leading-relaxed mb-3 map-desc">Relevance score by state for this window. The origin region where the trend primarily started is highlighted in vibrant yellow.</p>
         <TrendMap topic={topic} region={region} selectedState={selectedState} setSelectedState={setSelectedState} />
       </section>
 
