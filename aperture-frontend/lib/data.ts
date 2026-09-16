@@ -35,7 +35,8 @@ export const TOPICS = [
    shape: [40, 45, 50, 60, 55, 45, 35, 30, 40, 48],
    posts: [
      { src: 'X (Twitter)', c: '#000000', t: 'Subsidy rollback thread sees 20K mentions from prospective buyers', ago: '4 hours ago', tag: 'X' },
-     { src: 'YouTube', c: '#ff0000', t: 'Reviewer video explains charging constraints in heavy rain', ago: '8 hours ago', tag: 'YT' }
+     { src: 'Telegram', c: '#0088cc', t: 'EV owners community shares real-world range logs and battery data', ago: '6 hours ago', tag: 'TG' },
+     { src: 'Reddit', c: '#ff4500', t: 'r/indianbikes discussion on service center wait times and battery swaps', ago: '9 hours ago', tag: 'RD' }
    ]
   },
   {id:'ipl',name:'IPL auction buzz',cat:'Sports',vol:4300000,reach:52100000,growth:265,
@@ -48,8 +49,9 @@ export const TOPICS = [
    shape: [70, 66, 60, 40, 14, 20, 38, 44, 52, 58],
    posts: [
      { src: 'X (Twitter)', c: '#000000', t: 'Retention list leak spikes to 88K mentions an hour before confirmation', ago: '1 hour ago', tag: 'X' },
-     { src: 'Instagram', c: '#c13584', t: 'Fan-edit reel on the captaincy rumour passes 2.4M plays', ago: '3 hours ago', tag: 'IG' },
-     { src: 'YouTube', c: '#ff0000', t: 'Comment sections on auction previews skew sarcastic, 19% of replies', ago: '6 hours ago', tag: 'YT' }]
+     { src: 'Telegram', c: '#0088cc', t: 'Auction alert channels share live marquee-bid breakdown to 450K fans', ago: '3 hours ago', tag: 'TG' },
+     { src: 'Reddit', c: '#ff4500', t: 'r/Cricket megathread debates captaincy changes and auction purse limits', ago: '6 hours ago', tag: 'RD' }
+   ]
   },
   {id:'monsoon',name:'Monsoon flooding',cat:'Weather & Civic',vol:2600000,reach:30800000,growth:181,
    desc:'Relief-camp coordination, IMD alerts and waterlogging complaints are spiking across flood-hit districts, led by Assam, Maharashtra, Kerala and Bihar.',
@@ -61,8 +63,9 @@ export const TOPICS = [
    shape: [72, 68, 58, 44, 26, 16, 24, 36, 40, 48],
    posts: [
      { src: 'X (Twitter)', c: '#000000', t: 'Relief-camp list gets pinned and shared 61K times across districts', ago: '40 minutes ago', tag: 'X' },
-     { src: 'Facebook', c: '#1877f2', t: 'District groups coordinate boat requests through comment threads', ago: '2 hours ago', tag: 'FB' },
-     { src: 'Telegram', c: '#0088cc', t: 'IMD red alert forwarded to 1.1M subscribers within nine minutes', ago: '5 hours ago', tag: 'TG' }]
+     { src: 'Telegram', c: '#0088cc', t: 'IMD red alert forwarded to 1.1M subscribers within nine minutes', ago: '5 hours ago', tag: 'TG' },
+     { src: 'Reddit', c: '#ff4500', t: 'r/india megathread active with verified state relief and helpline links', ago: '7 hours ago', tag: 'RD' }
+   ]
   },
   {id:'creator',name:'Creator monetisation',cat:'Media & Creators',vol:1400000,reach:18200000,growth:72,
    desc:'A payout-structure change is reshaping how regional-language creators talk about brand deals and platform trust, concentrated in Maharashtra, Uttar Pradesh and Tamil Nadu.',
@@ -73,9 +76,10 @@ export const TOPICS = [
    q: 'creator monetisation', label: 'creator monetisation', mentions: '1.4M',
    shape: [44, 46, 50, 54, 58, 40, 24, 28, 38, 42],
    posts: [
-     { src: 'Instagram', c: '#c13584', t: 'Payout-change post pulls 38K saves from regional-language creators', ago: '3 hours ago', tag: 'IG' },
      { src: 'X (Twitter)', c: '#000000', t: 'Rate-card spreadsheet goes around, brand-deal pricing debate follows', ago: '6 hours ago', tag: 'X' },
-     { src: 'YouTube', c: '#ff0000', t: 'Watch-time shift dominates comments on creator-economy explainers', ago: '9 hours ago', tag: 'YT' }]
+     { src: 'Telegram', c: '#0088cc', t: 'Creator broadcast channel shares revised brand payout calculator', ago: '4 hours ago', tag: 'TG' },
+     { src: 'Reddit', c: '#ff4500', t: 'r/InstaCelebsGossip & creator subreddits debate platform revenue split', ago: '8 hours ago', tag: 'RD' }
+   ]
   }
 ];
 

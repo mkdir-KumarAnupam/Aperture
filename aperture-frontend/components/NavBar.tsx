@@ -38,18 +38,6 @@ export function NavBar({
           >
             Trends
           </Link>
-          <Link
-            href="/trends"
-            className="px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-900 transition-colors duration-300"
-          >
-            Network
-          </Link>
-          <Link
-            href="/trends"
-            className="px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-900 transition-colors duration-300"
-          >
-            Reports
-          </Link>
         </div>
       </div>
       <div className="flex items-center space-x-4">

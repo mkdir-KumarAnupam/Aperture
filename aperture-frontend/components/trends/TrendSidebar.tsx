@@ -27,19 +27,19 @@ export function TrendSidebar({
   onSelectTopic: (id: string) => void;
 }) {
   const [platformMix, setPlatformMix] = useState<number[]>([]);
-  const platforms = ["X (Twitter)", "Instagram", "Reddit", "Telegram"];
-  const colors = ["#1a73e8", "#4285f4", "#8ab4f8", "#d2e3fc"];
+  const platforms = ["X (Twitter)", "Telegram", "Reddit"];
+  const colors = ["#1a73e8", "#4285f4", "#8ab4f8"];
 
   useEffect(() => {
     const r = rng(hash(topic.id + "platform"));
-    let w = [r() * 1.5 + 0.5, r() * 1.2 + 0.3, r() * 0.8 + 0.2, r() * 0.5 + 0.1];
+    let w = [r() * 1.5 + 0.5, r() * 1.0 + 0.3, r() * 0.7 + 0.2];
     const sum = w.reduce((a, b) => a + b, 0);
     const mix = w.map((v) => Math.round((v / sum) * 100));
     const diff = 100 - mix.reduce((a, b) => a + b, 0);
     mix[0] += diff;
     
     // Animate in
-    setPlatformMix([0, 0, 0, 0]);
+    setPlatformMix([0, 0, 0]);
     setTimeout(() => {
       setPlatformMix(mix);
     }, 100);

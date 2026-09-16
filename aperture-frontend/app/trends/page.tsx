@@ -17,8 +17,11 @@ function TrendsContent() {
   const [topicId, setTopicId] = useState<string>(initialTopic as string);
   const [range, setRange] = useState<string>("30D");
   const [region, setRegion] = useState<string>("All India");
-  const [forecast, setForecast] = useState<boolean>(true);
+  const [forecast, setForecast] = useState<boolean>(false);
   const [selectedState, setSelectedState] = useState<string | null>(null);
+  const [isPresentation, setIsPresentation] = useState<boolean>(false);
+  const [curSlide, setCurSlide] = useState<number>(0);
+  const totalSlides = 8;
 
   // Sync URL to topicId
   useEffect(() => {
@@ -26,6 +29,51 @@ function TrendsContent() {
       setTopicId(rawTopic);
     }
   }, [rawTopic]);
+
+  useEffect(() => {
+    if (isPresentation) {
+      document.body.classList.add("presentation-mode");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      document.body.classList.remove("presentation-mode");
+      const slides = document.querySelectorAll(".slide-panel");
+      slides.forEach((s) => s.classList.remove("active-slide", "past-slide"));
+    }
+    return () => {
+      document.body.classList.remove("presentation-mode");
+    };
+  }, [isPresentation]);
+
+  useEffect(() => {
+    if (!isPresentation) return;
+    const slides = document.querySelectorAll(".slide-panel");
+    slides.forEach((s, i) => {
+      s.classList.remove("active-slide", "past-slide");
+      if (i === curSlide) {
+        s.classList.add("active-slide");
+      } else if (i < curSlide) {
+        s.classList.add("past-slide");
+      }
+    });
+  }, [isPresentation, curSlide]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isPresentation) return;
+      if (e.key === "ArrowRight" || e.key === " ") {
+        e.preventDefault();
+        setCurSlide((prev) => Math.min(totalSlides - 1, prev + 1));
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setCurSlide((prev) => Math.max(0, prev - 1));
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setIsPresentation(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPresentation, totalSlides]);
 
   const setTopicWithUrl = (id: string) => {
     setTopicId(id);
@@ -37,13 +85,61 @@ function TrendsContent() {
 
   return (
     <>
+      {/* Presentation Mode Elements */}
+      <div id="presentProgress">
+        <div
+          id="presentProgressBar"
+          style={{ width: `${((curSlide + 1) / totalSlides) * 100}%` }}
+        ></div>
+      </div>
+      <button
+        id="exitPresentBtn"
+        onClick={() => setIsPresentation(false)}
+        className="top-6 right-6 z-50 fixed flex items-center gap-2 bg-white hover:bg-gray-50 shadow-lg px-4 py-2 border border-gray-200 rounded-full font-bold text-gray-700 hover:text-red-600 text-xs uppercase tracking-widest transition-all cursor-pointer"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+        Exit
+      </button>
+      <div
+        id="presentNav"
+        className="bottom-8 left-1/2 z-50 fixed flex items-center gap-4 bg-gray-900/90 shadow-2xl backdrop-blur px-3 py-2 rounded-full text-white -translate-x-1/2 translate-y-8 transform"
+      >
+        <button
+          id="pPrev"
+          onClick={() => setCurSlide((prev) => Math.max(0, prev - 1))}
+          className="hover:bg-gray-700 p-2 rounded-full transition-colors cursor-pointer"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <span id="pCount" className="w-12 font-bold text-[13px] text-gray-300 text-center tracking-widest tnum">
+          {curSlide + 1} / {totalSlides}
+        </span>
+        <button
+          id="pNext"
+          onClick={() => setCurSlide((prev) => Math.min(totalSlides - 1, prev + 1))}
+          className="hover:bg-gray-700 p-2 rounded-full transition-colors cursor-pointer"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </button>
+      </div>
+
       <NavBar
         activeTab="Trends"
         rightSlot={
           <>
             <button
               id="presentBtn"
-              className="flex items-center gap-1.5 text-[13px] font-medium text-gray-500 hover:text-gray-900 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition-all duration-300 border border-gray-200/60"
+              onClick={() => {
+                setCurSlide(0);
+                setIsPresentation(true);
+              }}
+              className="flex items-center gap-1.5 text-[13px] font-medium text-gray-500 hover:text-gray-900 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition-all duration-300 border border-gray-200/60 cursor-pointer"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

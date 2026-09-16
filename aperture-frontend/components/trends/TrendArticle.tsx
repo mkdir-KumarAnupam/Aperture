@@ -5,7 +5,7 @@ import { TrendEmotions } from "./TrendEmotions";
 import { TrendDemographics } from "./TrendDemographics";
 import { TrendMap } from "./TrendMap";
 import { TrendNetwork } from "./TrendNetwork";
-import { hash, rng, EMO, QUOTE } from "@/lib/data";
+import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf } from "@/lib/data";
 import { useEffect, useState } from "react";
 
 export function TrendArticle({
@@ -51,6 +51,34 @@ export function TrendArticle({
 
   return (
     <article className="flex-grow w-full order-1 lg:order-2 timeline min-w-0">
+      {/* 00 — Presentation Cover */}
+      <section className="present-cover slide-panel">
+        <p className="text-sm font-bold text-gray-400 uppercase tracking-[0.2em] mb-4">
+          {topic.cat} | SYNC LIVE
+        </p>
+        <h1 className="text-6xl font-bold text-gray-900 mb-6 leading-tight tracking-tight">
+          {topic.name}
+        </h1>
+        <p className="text-xl text-gray-500 max-w-3xl mb-14 leading-relaxed">
+          {topic.desc}
+        </p>
+
+        <div className="grid grid-cols-3 gap-8 bg-white border border-gray-100 p-10 rounded-2xl shadow-sm w-full max-w-3xl">
+          <div>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Mentions</p>
+            <p className="text-4xl font-bold text-gray-900">{fmt(volOf(topic, selectedState, region))}</p>
+          </div>
+          <div className="border-l border-gray-200 pl-8">
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Reach</p>
+            <p className="text-4xl font-bold text-gray-900">{fmt(reachOf(topic, selectedState, region))}</p>
+          </div>
+          <div className="border-l border-gray-200 pl-8">
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Growth</p>
+            <p className="text-4xl font-bold text-blue-600">+{topic.growth}%</p>
+          </div>
+        </div>
+      </section>
+
       {/* 01 — chart */}
       <section className="reveal in slide-panel">
         <div className="marker">1</div>
