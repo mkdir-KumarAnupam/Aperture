@@ -171,6 +171,17 @@ select:focus {
 .node { transition: filter .2s ease, transform .2s ease; }
 .node:hover { filter: drop-shadow(0 4px 8px rgba(0,0,0,.12)); }
 
+@keyframes pulseBeacon {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.65); opacity: 0; }
+  100% { transform: scale(0.95); opacity: 0; }
+}
+.pulse-beacon {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulseBeacon 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 .segmented-scale { display: flex; height: 8px; width: 80px; border-radius: 4px; overflow: hidden; }
 .segmented-scale span { flex: 1; height: 100%; }
 .seg-1 { background-color: #e8f0fe; }
