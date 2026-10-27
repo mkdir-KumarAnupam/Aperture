@@ -423,6 +423,106 @@ function analyzeNetwork(canonical) {
     edges,
 
     topInfluencers,
+
+    // ── Blockchain: CIB detection fields ─────────────────────────────────────
+    // suspectedCIB: true when the cluster shows coordinated inauthentic signals.
+    // behaviorPattern: statistical fingerprint of the pattern — no user data.
+    suspectedCIB:    _detectCIB(summary, topInfluencers, events),
+    behaviorPattern: _extractBehaviorPattern(summary, events),
+    // ─────────────────────────────────────────────────────────────────────────
+  };
+}
+
+
+// ===========================================================================
+// CIB DETECTION HELPERS (used by blockchain layer only)
+// ===========================================================================
+
+/**
+ * Detect coordinated inauthentic behaviour based on network topology signals.
+ * Returns true when the cluster is unusually dense AND highly centralised —
+ * the hallmark of a coordinated bot network.
+ *
+ * @param {object}   summary       — Network summary from computeNetworkSummary()
+ * @param {object[]} topInfluencers — Top influencer list
+ * @param {object[]} events         — Raw canonical events
+ * @returns {boolean}
+ */
+function _detectCIB(summary, topInfluencers, events) {
+  const density = Number(summary?.density ?? 0);
+
+  const avgBetweenness =
+    topInfluencers.length > 0
+      ? topInfluencers.reduce((s, i) => s + Number(i.betweenness ?? 0), 0) /
+        topInfluencers.length
+      : 0;
+
+  // Timing coordination: compute inter-post delay std deviation
+  const timestamps = events
+    .map((e) => new Date(e.publishedAt ?? e.observedAt ?? 0).getTime())
+    .filter((t) => t > 0)
+    .sort((a, b) => a - b);
+
+  let timingCoordination = false;
+  if (timestamps.length >= 3) {
+    const delays = timestamps.slice(1).map((t, i) => t - timestamps[i]);
+    const mean   = delays.reduce((s, d) => s + d, 0) / delays.length;
+    const stddev = Math.sqrt(
+      delays.reduce((s, d) => s + (d - mean) ** 2, 0) / delays.length
+    );
+    // Extremely tight timing (stddev < 500ms) = coordinated posting
+    timingCoordination = stddev < 500 && mean < 2000;
+  }
+
+  // All three signals must fire to flag as suspected CIB
+  return density > 0.75 && avgBetweenness > 0.65 && timingCoordination;
+}
+
+/**
+ * Extract a behavioral fingerprint of the cluster.
+ * Contains ONLY statistical patterns — no user identifiers, handles, or IDs.
+ *
+ * @param {object}   summary — Network summary
+ * @param {object[]} events  — Raw canonical events
+ * @returns {object}
+ */
+function _extractBehaviorPattern(summary, events) {
+  const timestamps = events
+    .map((e) => new Date(e.publishedAt ?? e.observedAt ?? 0).getTime())
+    .filter((t) => t > 0)
+    .sort((a, b) => a - b);
+
+  let medianDelay = 0;
+  let stddev      = 0;
+
+  if (timestamps.length >= 2) {
+    const delays = timestamps.slice(1).map((t, i) => t - timestamps[i]);
+    const sorted = [...delays].sort((a, b) => a - b);
+    medianDelay  = sorted[Math.floor(sorted.length / 2)];
+    const mean   = delays.reduce((s, d) => s + d, 0) / delays.length;
+    stddev       = Math.sqrt(
+      delays.reduce((s, d) => s + (d - mean) ** 2, 0) / delays.length
+    );
+  }
+
+  // Hashtag overlap: ratio of events sharing the most common hashtag
+  const hashtagCounts = {};
+  for (const event of events) {
+    for (const tag of (event.hashtags ?? [])) {
+      hashtagCounts[tag] = (hashtagCounts[tag] ?? 0) + 1;
+    }
+  }
+  const maxHashtagCount  = Math.max(0, ...Object.values(hashtagCounts));
+  const hashtagOverlap   =
+    events.length > 0 ? maxHashtagCount / events.length : 0;
+
+  return {
+    median_inter_post_delay_ms: Math.round(medianDelay),
+    inter_post_delay_stddev:    Math.round(stddev),
+    cluster_size:               Number(summary?.nodes ?? events.length),
+    cluster_density:            Number(summary?.density ?? 0),
+    avg_betweenness:            Number(summary?.avgBetweenness ?? 0),
+    top_hashtag_overlap_ratio:  Math.round(hashtagOverlap * 1000) / 1000,
   };
 }
 

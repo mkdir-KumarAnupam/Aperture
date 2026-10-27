@@ -69,6 +69,8 @@ const { generateForecast } = require("./forecasting/index");
 
 const { generateTrendDescription } = require("./groqClient");
 
+const { getAnchorer } = require("./blockchain/anchorer");
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -88,6 +90,10 @@ const DATABASE_CONCURRENCY = 1;
 // ============================================================================
 
 let shuttingDown = false;
+
+// Blockchain: config hash registered at startup, embedded in every snapshot.
+// null when BLOCKCHAIN_ENABLED !== "true".
+let CURRENT_CONFIG_HASH = null;
 
 // Prevent multiple simultaneous PostgreSQL reconnect attempts.
 let postgresConnectionPromise = null;
@@ -3439,6 +3445,23 @@ function createDatabaseWorker() {
         log("Database", `Snapshot persisted | ` + `id=${snapshot.id}`);
 
         // ---------------------------------------------------------------
+        // 5a. Blockchain: anchor snapshot fingerprint
+        // ---------------------------------------------------------------
+        // Batched queuing with non-fatal error handling.
+        // The analytics pipeline continues even if the chain is unreachable.
+        {
+          const anchorer = getAnchorer();
+          if (anchorer && CURRENT_CONFIG_HASH) {
+            try {
+              const { fingerprint } = anchorer.queueSnapshot(snapshot, trend, analytics, collection, CURRENT_CONFIG_HASH);
+              log("Blockchain", `Snapshot queued for batching | fingerprint=${fingerprint}`);
+            } catch (err) {
+              error("Blockchain", `Snapshot queue failed (non-fatal): ${err.message}`);
+            }
+          }
+        }
+
+        // ---------------------------------------------------------------
         // 6. Dedicated analytics persistence
         // ---------------------------------------------------------------
 
@@ -3461,6 +3484,28 @@ function createDatabaseWorker() {
         // ---------------------------------------------------------------
 
         await persistNetworkSnapshot(snapshot.id, analytics.network);
+
+        // ---------------------------------------------------------------
+        // 9a. Blockchain: report CIB behavioral fingerprint if detected
+        // ---------------------------------------------------------------
+        {
+          const anchorer = getAnchorer();
+          if (anchorer && analytics.network?.suspectedCIB && analytics.network?.behaviorPattern) {
+            anchorer
+              .reportCIB(
+                analytics.network.behaviorPattern,
+                trend.canonical_label,
+                canonical.platform ?? "unknown",
+              )
+              .then((behaviorHash) => {
+                log("Blockchain", `CIB reported | hash=${behaviorHash} | trend=${trend.canonical_label}`);
+              })
+              .catch((err) => {
+                error("Blockchain", `CIB report failed (non-fatal): ${err.message}`);
+              });
+          }
+        }
+
 
         // ---------------------------------------------------------------
         // 10. Network relationships
@@ -3565,6 +3610,56 @@ function registerWorkerEvents(worker) {
 }
 
 // ============================================================================
+// Blockchain Audit Callback
+// ============================================================================
+
+async function blockchainAuditLogger(type, data) {
+  if (!pgClient) return;
+  const {
+    fingerprint,
+    txHash,
+    blockNumber,
+    snapshotId,
+    trendLabel,
+    capturedAt,
+    batchSize,
+    status,
+    configHash,
+    platform,
+    behaviorHash,
+    merkleRoot,
+    merkleProof,
+    leafIndex,
+    snapshotRoot,
+    fieldProofs,
+  } = data;
+  
+  let actualFingerprint = fingerprint || configHash || behaviorHash || merkleRoot;
+  
+  await pgClient.query(`
+    INSERT INTO blockchain_anchors
+      (anchor_type, fingerprint, tx_hash, block_number, snapshot_id, trend_label, platform, captured_at, batch_size, status, merkle_root, merkle_proof, leaf_index, snapshot_root, field_proofs)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  `, [
+    type,
+    actualFingerprint,
+    txHash,
+    blockNumber,
+    snapshotId ?? null,
+    trendLabel ?? null,
+    platform ?? null,
+    capturedAt ?? null,
+    batchSize ?? 1,
+    status ?? 'confirmed',
+    merkleRoot ?? null,
+    merkleProof ? JSON.stringify(merkleProof) : null,
+    leafIndex ?? null,
+    snapshotRoot ?? null,
+    fieldProofs ? JSON.stringify(fieldProofs) : null,
+  ]);
+}
+
+// ============================================================================
 // Startup
 // ============================================================================
 
@@ -3585,6 +3680,39 @@ async function startWorkers() {
     if (shuttingDown) {
       return;
     }
+
+    // ── Blockchain: register pipeline config hash once at startup ─────────────
+    // CURRENT_CONFIG_HASH is embedded in every snapshot fingerprint, creating a
+    // verifiable link from each analytical output to the exact algorithm version.
+    const anchorer = getAnchorer({ onAudit: blockchainAuditLogger });
+    if (anchorer) {
+      try {
+        CURRENT_CONFIG_HASH = await anchorer.registerConfig({
+          VIRALITY_WEIGHTS: {
+            velocityNorm:     0.35,
+            burstScore:       0.20,
+            accelerationNorm: 0.15,
+            engagementNorm:   0.15,
+            influenceNorm:    0.15,
+          },
+          VIRALITY_TIERS: [
+            { max: 0.20, tier: "dormant"    },
+            { max: 0.40, tier: "emerging"   },
+            { max: 0.60, tier: "trending"   },
+            { max: 0.80, tier: "viral"      },
+            { max: 1.00, tier: "mega_viral" },
+          ],
+          PAGERANK_DAMPING:  0.85,
+          SENTIMENT_MODEL:   process.env.GROQ_MODEL ?? "qwen/qwen3-27b",
+          schema_version:    SUPPORTED_SCHEMA_VERSION,
+        });
+        console.log(`[Blockchain] Config anchored: ${CURRENT_CONFIG_HASH}`);
+      } catch (err) {
+        // Non-fatal — pipeline continues even if blockchain is unreachable
+        console.error(`[Blockchain] Config registration failed (non-fatal): ${err.message}`);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     const sentimentWorker = createSentimentWorker();
 
@@ -3685,6 +3813,20 @@ async function shutdown(signal) {
     success("Shutdown", "All BullMQ workers closed.");
   } catch (err) {
     error("Shutdown", `Failed to close workers cleanly: ${err.message}`);
+  }
+
+  // --------------------------------------------------------------------------
+  // Blockchain Anchorer
+  // --------------------------------------------------------------------------
+
+  try {
+    const anchorer = getAnchorer();
+    if (anchorer) {
+      await anchorer.shutdown();
+      success("Shutdown", "Blockchain anchorer shut down cleanly.");
+    }
+  } catch(err) {
+    error("Shutdown", `Failed to shutdown blockchain anchorer: ${err.message}`);
   }
 
   // --------------------------------------------------------------------------
