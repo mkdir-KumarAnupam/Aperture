@@ -21,7 +21,7 @@ function TrendsContent() {
   const [selectedState, setSelectedState] = useState<string | null>(null);
   const [isPresentation, setIsPresentation] = useState<boolean>(false);
   const [curSlide, setCurSlide] = useState<number>(0);
-  const totalSlides = 8;
+  const [totalSlides, setTotalSlides] = useState<number>(7);
 
   // Sync URL to topicId
   useEffect(() => {
@@ -34,6 +34,10 @@ function TrendsContent() {
     if (isPresentation) {
       document.body.classList.add("presentation-mode");
       window.scrollTo({ top: 0, behavior: "smooth" });
+      const slides = document.querySelectorAll(".slide-panel");
+      if (slides.length > 0) {
+        setTotalSlides(slides.length);
+      }
     } else {
       document.body.classList.remove("presentation-mode");
       const slides = document.querySelectorAll(".slide-panel");
