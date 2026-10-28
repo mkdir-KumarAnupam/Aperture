@@ -212,86 +212,190 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 input[type=range]:focus::-webkit-slider-thumb { outline: 2px solid #aecbfa; outline-offset: 2px; }
 
 /* Presentation Mode */
-body.presentation-mode { overflow: hidden; margin: 0; padding: 0; }
-body.presentation-mode nav, body.presentation-mode aside, body.presentation-mode header { display: none !important; }
-body.presentation-mode #mainLayout { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
-body.presentation-mode #splitLayout { display: block !important; margin: 0 !important; width: 100vw; height: 100vh; }
-body.presentation-mode .timeline::before, body.presentation-mode .timeline section .marker { display: none !important; }
-body.presentation-mode article {
-  display: grid !important;
+body.presentation-mode {
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw;
+  height: 100vh;
+}
+body.presentation-mode nav,
+body.presentation-mode aside,
+body.presentation-mode header {
+  display: none !important;
+}
+
+body.presentation-mode #mainLayout,
+body.presentation-mode #splitLayout {
+  position: fixed !important;
+  inset: 0 !important;
   width: 100vw !important;
   height: 100vh !important;
-  max-width: none !important;
-  place-items: center;
-  padding-bottom: 4rem;
-}
-
-.present-cover { display: none; }
-body.presentation-mode .present-cover { display: flex; flex-direction: column; align-items: center; text-align: center; }
-
-body.presentation-mode article > section {
-  grid-area: 1 / 1;
-  width: 100% !important;
-  max-width: 1300px !important;
   margin: 0 !important;
-  padding: 2rem 4rem !important;
-  opacity: 0 !important;
-  pointer-events: none;
-  transform: translateX(120px) scale(0.98) !important;
-  transition: opacity 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  padding: 0 !important;
+  max-width: none !important;
+  overflow: hidden !important;
+  display: block !important;
+  z-index: 20;
 }
+
+body.presentation-mode .timeline::before,
+body.presentation-mode .timeline section .marker {
+  display: none !important;
+}
+
+body.presentation-mode article {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  max-width: none !important;
+  overflow: hidden !important;
+  display: block !important;
+  z-index: 21;
+}
+
+/* Presentation Slides: Dead Center Position & Animations */
+body.presentation-mode article > section {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(92vw, 1140px) !important;
+  max-width: 1140px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-top: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s !important;
+  box-sizing: border-box !important;
+}
+
 body.presentation-mode article > section.active-slide {
   opacity: 1 !important;
-  pointer-events: auto;
-  transform: translateX(0) scale(1) !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: translate(-50%, -50%) scale(1) !important;
+  z-index: 30;
 }
-body.presentation-mode article > section.past-slide { transform: translateX(-120px) scale(0.98) !important; }
 
-body.presentation-mode article > section h2 { text-align: center; font-size: 2.2rem; margin-bottom: 1rem; }
-body.presentation-mode article > section > p { text-align: center; font-size: 1.25rem; max-width: 900px; margin-inline: auto; margin-bottom: 2.5rem; }
+body.presentation-mode article > section.past-slide {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translate(-50%, -50%) translateX(-60px) scale(0.98) !important;
+}
+
+/* 00 — Slide Cover */
+.present-cover { display: none; }
+body.presentation-mode .present-cover {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  width: min(90vw, 960px) !important;
+  max-width: 960px !important;
+}
+body.presentation-mode .present-cover h1 {
+  font-size: clamp(2.4rem, 4.5vw, 3.4rem) !important;
+  line-height: 1.15 !important;
+  margin-bottom: 0.75rem !important;
+}
+body.presentation-mode .present-cover p.text-xl {
+  font-size: 1.1rem !important;
+  max-width: 720px !important;
+  margin-bottom: 1.75rem !important;
+  line-height: 1.5 !important;
+}
+body.presentation-mode .present-cover .grid {
+  padding: 1.5rem 2.5rem !important;
+}
+
+/* Presentation Slide Headers & Descriptions */
+body.presentation-mode article > section:not(.present-cover) h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  color: #202124;
+}
+body.presentation-mode article > section > p {
+  font-size: 0.925rem;
+  color: #5f6368;
+  margin-bottom: 1rem;
+  line-height: 1.45;
+}
+
+/* Presentation Interactive Cards */
 body.presentation-mode .interactive-card {
   transform: none !important;
-  box-shadow: 0 16px 50px rgba(0,0,0,0.06);
-  border: 1px solid #f1f3f4;
-  padding: 3rem;
-  border-radius: 1.5rem;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e8eaed;
+  padding: 1.25rem 1.75rem !important;
+  border-radius: 1.25rem !important;
   background: #fff;
 }
+body.presentation-mode .interactive-card:not(.trend-map-card) svg {
+  max-height: 320px;
+}
+
 body.presentation-mode .keywords-section,
 body.presentation-mode article > section:not(.slide-panel) {
   display: none !important;
 }
 
-body.presentation-mode .lang-donut-container { width: 141px !important; height: 141px !important; }
+body.presentation-mode .lang-donut-container {
+  width: 130px !important;
+  height: 130px !important;
+}
 
 /* Presentation Mode: Map Slide Adjustments */
-body.presentation-mode .present-map-panel {
-  padding-top: 1rem !important;
-  padding-bottom: 2rem !important;
-}
 body.presentation-mode .present-map-panel h2 {
-  font-size: 2rem !important;
-  margin-bottom: 0.35rem !important;
+  font-size: 1.5rem !important;
+  margin-bottom: 0.25rem !important;
 }
 body.presentation-mode .present-map-panel p.map-desc {
-  font-size: 1.1rem !important;
-  margin-bottom: 1.25rem !important;
+  font-size: 0.925rem !important;
+  margin-bottom: 0.75rem !important;
 }
 body.presentation-mode .trend-map-card {
-  padding: 1.25rem 2rem !important;
-  min-height: 520px !important;
-  max-width: 1150px;
-  margin-inline: auto;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 1.25rem 1.75rem !important;
+  min-height: 480px !important;
+  border-radius: 1.25rem !important;
 }
 body.presentation-mode .trend-map-inner {
-  height: 500px !important;
-  min-height: 500px !important;
+  height: 460px !important;
+  min-height: 460px !important;
+}
+body.presentation-mode .trend-map-card svg {
+  max-height: 100% !important;
+  height: 100% !important;
+  width: 100% !important;
 }
 
 #presentNav, #exitPresentBtn, #presentProgress { opacity: 0; pointer-events: none; transition: all 0.4s ease; }
-body.presentation-mode #exitPresentBtn { opacity: 1; pointer-events: auto; }
-body.presentation-mode #presentNav { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
-body.presentation-mode #presentProgress { opacity: 1; }
+body.presentation-mode #exitPresentBtn {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 100;
+  top: 1.5rem;
+  right: 1.5rem;
+}
+body.presentation-mode #presentNav {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 100;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+body.presentation-mode #presentProgress { opacity: 1; z-index: 100; }
 #presentProgress { position: fixed; top: 0; left: 0; height: 4px; background: #e8eaed; width: 100vw; z-index: 100; }
 #presentProgressBar { height: 100%; background: #1a73e8; transition: width 0.4s ease; width: 0%; }
 

@@ -11,6 +11,8 @@ function TrendsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawTopic = searchParams.get("topic");
+  const rawPresent = searchParams.get("present") === "true";
+  const rawSlide = parseInt(searchParams.get("slide") || "0", 10);
   
   const initialTopic = TOPICS.find((t) => t.id === rawTopic) ? rawTopic : "genai";
 
@@ -19,9 +21,9 @@ function TrendsContent() {
   const [region, setRegion] = useState<string>("All India");
   const [forecast, setForecast] = useState<boolean>(false);
   const [selectedState, setSelectedState] = useState<string | null>(null);
-  const [isPresentation, setIsPresentation] = useState<boolean>(false);
-  const [curSlide, setCurSlide] = useState<number>(0);
-  const [totalSlides, setTotalSlides] = useState<number>(7);
+  const [isPresentation, setIsPresentation] = useState<boolean>(rawPresent);
+  const [curSlide, setCurSlide] = useState<number>(isNaN(rawSlide) ? 0 : rawSlide);
+  const [totalSlides, setTotalSlides] = useState<number>(8);
 
   // Sync URL to topicId
   useEffect(() => {

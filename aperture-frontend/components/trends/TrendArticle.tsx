@@ -5,9 +5,11 @@ import { TrendEmotions } from "./TrendEmotions";
 import { TrendDemographics } from "./TrendDemographics";
 import { TrendMap } from "./TrendMap";
 import { TrendNetwork } from "./TrendNetwork";
-import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf } from "@/lib/data";
+import { NarrativeLandscape } from "./NarrativeLandscape";
+import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf, getNarrativesForTopic } from "@/lib/data";
 import { useEffect, useState } from "react";
 import { PlatformIcon } from "./PlatformIcon";
+
 
 export function TrendArticle({
   topic,
@@ -99,9 +101,19 @@ export function TrendArticle({
         
       </section>
 
-      {/* 02 — emotion */}
+      {/* 02 — narrative landscape */}
       <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
         <div className="marker">2</div>
+        <NarrativeLandscape
+          narratives={topic.narratives || getNarrativesForTopic(topic.id)}
+          topicName={topic.name}
+          topicId={topic.id}
+        />
+      </section>
+
+      {/* 03 — emotion */}
+      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
+        <div className="marker">3</div>
         <div className="flex items-center justify-center lg:justify-start gap-3 mb-3 flex-wrap">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Emotion mix</h2>
           <span className="text-[11px] font-bold text-blue-600 bg-blue-50/80 px-2.5 py-1 rounded-full">NLP-derived</span>
@@ -109,9 +121,9 @@ export function TrendArticle({
         <TrendEmotions topic={topic} />
       </section>
 
-      {/* 03 — demographics */}
+      {/* 04 — demographics */}
       <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
-        <div className="marker">3</div>
+        <div className="marker">4</div>
         <div className="flex items-center justify-center lg:justify-start gap-3 mb-3 flex-wrap">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Who&apos;s talking</h2>
           <span className="text-[11px] font-bold text-purple-600 bg-purple-50/80 px-2.5 py-1 rounded-full">AI-inferred</span>
@@ -120,9 +132,10 @@ export function TrendArticle({
         <TrendDemographics topic={topic} />
       </section>
 
-      {/* 04 — keywords */}
+      {/* 05 — keywords (Temporarily hidden) */}
+      {/*
       <section className="reveal in pt-6 border-t border-gray-100/50 keywords-section">
-        <div className="marker">4</div>
+        <div className="marker">5</div>
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-3">Breakout keywords</h2>
         <p className="text-sm text-gray-500 leading-relaxed mb-6">Terms whose share of the conversation jumped this window, ranked by the size of the jump.</p>
         <div className="space-y-1 max-w-md bg-white p-2 rounded-xl border border-gray-100 shadow-sm stagger interactive-card">
@@ -139,6 +152,7 @@ export function TrendArticle({
           })}
         </div>
       </section>
+      */}
 
       {/* 05 — map */}
       <section className="reveal in pt-4 border-t border-gray-100/50 slide-panel present-map-panel">
