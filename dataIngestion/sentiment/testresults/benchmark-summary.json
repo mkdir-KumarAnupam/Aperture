@@ -1,0 +1,167 @@
+{
+  "totalTestCases": 100,
+  "totalTimeSeconds": "9.63",
+  "accuracy": {
+    "sentimentAccuracyPct": "94.00%",
+    "narrativeAccuracyPct": "96.00%",
+    "stanceAccuracyPct": "85.53%",
+    "stanceTotalApplicable": "65/76",
+    "fallbackCalibrationPct": "98.00%",
+    "affectAlignmentPct": "99.67%",
+    "allCoreMatchedPct": "84.00%"
+  },
+  "costs": {
+    "totalInputTokens": 458957,
+    "totalOutputTokens": 122081,
+    "avgInputTokensPerBatch": "4589.6",
+    "totalCostUSD": "0.019276",
+    "costPerBatchUSD": "0.000193",
+    "projectedCost1kBatches": "0.1928",
+    "projectedCost10kBatches": "1.9276",
+    "projectedCost100kBatches": "19.2762",
+    "projectedCost1M_Batches": "192.76"
+  },
+  "latency": {
+    "avgLatencyMs": "382.3",
+    "p50LatencyMs": 381,
+    "p95LatencyMs": 494,
+    "minLatencyMs": 298,
+    "maxLatencyMs": 617
+  },
+  "categoryBreakdown": {
+    "sentiment_positive": {
+      "total": 4,
+      "sentimentOk": 4,
+      "narrativeOk": 4,
+      "stanceOk": 4,
+      "stanceApplicable": 4,
+      "cost": 0.00045217200000000003,
+      "tokens": 10766
+    },
+    "sentiment_negative": {
+      "total": 4,
+      "sentimentOk": 4,
+      "narrativeOk": 4,
+      "stanceOk": 4,
+      "stanceApplicable": 4,
+      "cost": 0.00046699800000000004,
+      "tokens": 11119
+    },
+    "sentiment_neutral": {
+      "total": 4,
+      "sentimentOk": 4,
+      "narrativeOk": 4,
+      "stanceOk": 4,
+      "stanceApplicable": 4,
+      "cost": 0.0004399080000000001,
+      "tokens": 10474
+    },
+    "sentiment_mixed": {
+      "total": 12,
+      "sentimentOk": 12,
+      "narrativeOk": 12,
+      "stanceOk": 12,
+      "stanceApplicable": 12,
+      "cost": 0.0018082260000000002,
+      "tokens": 43053
+    },
+    "interaction_weighting": {
+      "total": 12,
+      "sentimentOk": 11,
+      "narrativeOk": 12,
+      "stanceOk": 11,
+      "stanceApplicable": 12,
+      "cost": 0.002706648,
+      "tokens": 64444
+    },
+    "narrative_novel_topic": {
+      "total": 7,
+      "sentimentOk": 7,
+      "narrativeOk": 7,
+      "stanceOk": 0,
+      "stanceApplicable": 0,
+      "cost": 0.0014208600000000004,
+      "tokens": 33830
+    },
+    "narrative_empty_pool": {
+      "total": 5,
+      "sentimentOk": 5,
+      "narrativeOk": 5,
+      "stanceOk": 0,
+      "stanceApplicable": 0,
+      "cost": 0.00045864000000000007,
+      "tokens": 10920
+    },
+    "narrative_subtle_nuance": {
+      "total": 12,
+      "sentimentOk": 9,
+      "narrativeOk": 12,
+      "stanceOk": 9,
+      "stanceApplicable": 12,
+      "cost": 0.0027626340000000004,
+      "tokens": 65777
+    },
+    "sentiment_sarcasm": {
+      "total": 12,
+      "sentimentOk": 12,
+      "narrativeOk": 10,
+      "stanceOk": 2,
+      "stanceApplicable": 4,
+      "cost": 0.002358006,
+      "tokens": 56143
+    },
+    "affect_spectrum_stress": {
+      "total": 12,
+      "sentimentOk": 12,
+      "narrativeOk": 12,
+      "stanceOk": 9,
+      "stanceApplicable": 12,
+      "cost": 0.002480478,
+      "tokens": 59059
+    },
+    "stance_nuance": {
+      "total": 10,
+      "sentimentOk": 9,
+      "narrativeOk": 8,
+      "stanceOk": 6,
+      "stanceApplicable": 8,
+      "cost": 0.0021323400000000004,
+      "tokens": 50770
+    },
+    "batch_boundary_limit": {
+      "total": 6,
+      "sentimentOk": 5,
+      "narrativeOk": 6,
+      "stanceOk": 4,
+      "stanceApplicable": 4,
+      "cost": 0.001789284,
+      "tokens": 42602
+    }
+  },
+  "confusionMatrix": {
+    "positive": {
+      "positive": 26,
+      "negative": 0,
+      "neutral": 0,
+      "mixed": 0
+    },
+    "negative": {
+      "positive": 1,
+      "negative": 44,
+      "neutral": 0,
+      "mixed": 1
+    },
+    "neutral": {
+      "positive": 1,
+      "negative": 2,
+      "neutral": 9,
+      "mixed": 1
+    },
+    "mixed": {
+      "positive": 0,
+      "negative": 0,
+      "neutral": 0,
+      "mixed": 15
+    }
+  }
+}

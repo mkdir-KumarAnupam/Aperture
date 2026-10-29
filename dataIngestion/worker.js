@@ -97,29 +97,29 @@ let postgresConnectionPromise = null;
 // Sentiment Pipeline
 // ============================================================================
 
-let analyzeBatch = null;
+let processSentimentJob = null;
 
 async function loadSentimentPipeline() {
-  console.log("[Startup] Loading sentiment pipeline...");
+  console.log("[Startup] Loading JEV sentiment pipeline...");
 
   const sentimentPipeline = await import(
-    "./sentiment/src/pipeline.js"
+    "./sentiment/src/sentimentWorker.js"
   );
 
   if (
     !sentimentPipeline ||
-    typeof sentimentPipeline.analyzeBatch !== "function"
+    typeof sentimentPipeline.processSentimentJob !== "function"
   ) {
     throw new Error(
-      "Sentiment pipeline does not export analyzeBatch().",
+      "Sentiment pipeline does not export processSentimentJob().",
     );
   }
 
-  analyzeBatch =
-    sentimentPipeline.analyzeBatch;
+  processSentimentJob =
+    sentimentPipeline.processSentimentJob;
 
   console.log(
-    "[Startup] Sentiment pipeline loaded successfully.",
+    "[Startup] JEV sentiment pipeline loaded successfully.",
   );
 }
 
@@ -2367,127 +2367,31 @@ async function persistSentimentSnapshot(
     return;
   }
 
-  const positive =
-    Number(
-      sentiment?.summary?.positive ??
-      0,
-    );
-
-  const neutral =
-    Number(
-      sentiment?.summary?.neutral ??
-      0,
-    );
-
-  const negative =
-    Number(
-      sentiment?.summary?.negative ??
-      0,
-    );
-
-  const safePositive =
-    Number.isFinite(positive)
-      ? positive
-      : 0;
-
-  const safeNeutral =
-    Number.isFinite(neutral)
-      ? neutral
-      : 0;
-
-  const safeNegative =
-    Number.isFinite(negative)
-      ? negative
-      : 0;
-
-  const total =
-    safePositive +
-    safeNeutral +
-    safeNegative;
-
-  const positivePercentage =
-    total > 0
-      ? (safePositive / total) *
-      100
-      : 0;
-
-  const neutralPercentage =
-    total > 0
-      ? (safeNeutral / total) *
-      100
-      : 0;
-
-  const negativePercentage =
-    total > 0
-      ? (safeNegative / total) *
-      100
-      : 0;
-
-  const polarityIndex =
-    total > 0
-      ? (safePositive -
-        safeNegative) /
-      total
-      : 0;
-
+  /*
+   * Store the complete JEV sentiment analytics object directly
+   * into the 'data' JSONB column of trend_sentiment_snapshots.
+   */
   const query = `
     INSERT INTO trend_sentiment_snapshots (
       snapshot_id,
-      positive_count,
-      neutral_count,
-      negative_count,
-      positive_percentage,
-      neutral_percentage,
-      negative_percentage,
-      polarity_index
+      data
     )
     VALUES (
       $1,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6,
-      $7,
-      $8
+      $2
     )
     ON CONFLICT (
       snapshot_id
     )
     DO UPDATE SET
-      positive_count =
-        EXCLUDED.positive_count,
-
-      neutral_count =
-        EXCLUDED.neutral_count,
-
-      negative_count =
-        EXCLUDED.negative_count,
-
-      positive_percentage =
-        EXCLUDED.positive_percentage,
-
-      neutral_percentage =
-        EXCLUDED.neutral_percentage,
-
-      negative_percentage =
-        EXCLUDED.negative_percentage,
-
-      polarity_index =
-        EXCLUDED.polarity_index
+      data = EXCLUDED.data
   `;
 
   await queryWithTimeout(
     query,
     [
       snapshotId,
-      safePositive,
-      safeNeutral,
-      safeNegative,
-      positivePercentage,
-      neutralPercentage,
-      negativePercentage,
-      polarityIndex,
+      JSON.stringify(sentiment),
     ],
   );
 }
@@ -3281,7 +3185,7 @@ async function withTransaction(
 
 function createSentimentWorker() {
   if (
-    typeof analyzeBatch !==
+    typeof processSentimentJob !==
     "function"
   ) {
     throw new Error(
@@ -3315,409 +3219,11 @@ function createSentimentWorker() {
         `Run=${runId}`,
       );
 
-      const textEntries = [];
-
-      for (
-        let index = 0;
-        index <
-        data.events.length;
-        index++
-      ) {
-        const event =
-          data.events[index];
-
-        const text =
-          event.content?.text;
-
-        if (
-          typeof text !==
-          "string" ||
-          !text.trim()
-        ) {
-          continue;
-        }
-
-        textEntries.push({
-          eventIndex:
-            index,
-
-          eventId:
-            event.eventId,
-
-          publishedAt:
-            event.time?.publishedAt ??
-            null,
-
-          platform:
-            event.platform,
-
-          text:
-            text.trim(),
+      const result =
+        await processSentimentJob(job, {
+          cacheRedis: localSharedRedis,
+          db: pgClient,
         });
-      }
-
-      log(
-        "Sentiment",
-        `Found ${textEntries.length}/${data.events.length} ` +
-        `events with analyzable text.`,
-      );
-
-      if (
-        textEntries.length ===
-        0
-      ) {
-        const emptyResult = {
-          category:
-            "sentiment",
-
-          eventCount:
-            data.events.length,
-
-          analyzedCount:
-            0,
-
-          unanalyzedCount:
-            data.events.length,
-
-          platformCounts:
-            getPlatformCounts(
-              data.events,
-            ),
-
-          results: [],
-
-          summary: {
-            positive: 0,
-            neutral: 0,
-            negative: 0,
-          },
-
-          emotions: {},
-
-          stance: {
-            supportive: 0,
-            against: 0,
-            neutral: 0,
-          },
-
-          sarcasm: {
-            detected: 0,
-            notDetected: 0,
-          },
-
-          tierUsage: {
-            tier1: 0,
-            tier2: 0,
-          },
-        };
-
-        success(
-          "Sentiment",
-          `DONE job=${job.id} | ` +
-          `0/${data.events.length} analyzed | ` +
-          `No analyzable text.`,
-        );
-
-        return emptyResult;
-      }
-
-      log(
-        "Sentiment",
-        `Sending ${textEntries.length} texts to sentiment pipeline...`,
-      );
-
-      const predictions =
-        await analyzeBatch(
-          textEntries.map(
-            (entry) =>
-              entry.text,
-          ),
-        );
-
-      if (
-        !Array.isArray(
-          predictions,
-        ) ||
-        predictions.length !==
-        textEntries.length
-      ) {
-        throw new Error(
-          `Sentiment pipeline returned ` +
-          `${predictions?.length ?? 0} results ` +
-          `for ${textEntries.length} events.`,
-        );
-      }
-
-      log(
-        "Sentiment",
-        `Sentiment pipeline returned ` +
-        `${predictions.length} predictions.`,
-      );
-
-      const results = [];
-
-      for (
-        let i = 0;
-        i <
-        textEntries.length;
-        i++
-      ) {
-        const entry =
-          textEntries[i];
-
-        const prediction =
-          predictions[i];
-
-        if (
-          !prediction ||
-          typeof prediction !==
-          "object"
-        ) {
-          continue;
-        }
-
-        results.push({
-          eventId:
-            entry.eventId,
-
-          platform:
-            entry.platform,
-
-          publishedAt:
-            entry.publishedAt,
-
-          polarity:
-            prediction.polarity ?? {
-              label: null,
-              confidence: null,
-            },
-
-          emotions:
-            Array.isArray(
-              prediction.emotions,
-            )
-              ? prediction.emotions
-              : [],
-
-          stance:
-            prediction.stance ?? {
-              label: null,
-              confidence: null,
-            },
-
-          sarcasm:
-            prediction.sarcasm ?? {
-              detected: null,
-              confidence: null,
-            },
-
-          tier:
-            prediction.tier ??
-            null,
-
-          /*
-           * Optional explanation returned
-           * by newer Tier 2 implementations.
-           *
-           * Does not break the existing
-           * sentiment contract when absent.
-           */
-          reason:
-            prediction.reason ??
-            null,
-        });
-      }
-
-      const summary = {
-        positive: 0,
-        neutral: 0,
-        negative: 0,
-      };
-
-      const emotions = {};
-
-      const stance = {
-        supportive: 0,
-        against: 0,
-        neutral: 0,
-      };
-
-      const sarcasm = {
-        detected: 0,
-        notDetected: 0,
-      };
-
-      const tierUsage = {
-        tier1: 0,
-        tier2: 0,
-      };
-
-      for (
-        const result
-        of results
-      ) {
-        const polarity =
-          result.polarity?.label;
-
-        if (
-          Object.prototype.hasOwnProperty.call(
-            summary,
-            polarity,
-          )
-        ) {
-          summary[
-            polarity
-          ]++;
-        }
-
-        if (
-          Array.isArray(
-            result.emotions,
-          )
-        ) {
-          for (
-            const emotion
-            of result.emotions
-          ) {
-            if (
-              !emotion?.label
-            ) {
-              continue;
-            }
-
-            emotions[
-              emotion.label
-            ] =
-              (
-                emotions[
-                emotion.label
-                ] || 0
-              ) + 1;
-          }
-        }
-
-        const stanceLabel =
-          result.stance?.label;
-
-        if (
-          Object.prototype.hasOwnProperty.call(
-            stance,
-            stanceLabel,
-          )
-        ) {
-          stance[
-            stanceLabel
-          ]++;
-        }
-
-        if (
-          result.sarcasm
-            ?.detected === true
-        ) {
-          sarcasm.detected++;
-        } else if (
-          result.sarcasm
-            ?.detected === false
-        ) {
-          sarcasm.notDetected++;
-        }
-
-        if (
-          result.tier === 1
-        ) {
-          tierUsage.tier1++;
-        } else if (
-          result.tier === 2
-        ) {
-          tierUsage.tier2++;
-        }
-      }
-
-      let overallSentiment =
-        "unknown";
-
-      const totalAnalyzed =
-        results.length;
-
-      if (
-        totalAnalyzed > 0
-      ) {
-        const {
-          positive,
-          negative,
-          neutral,
-        } = summary;
-
-        const difference =
-          Math.abs(
-            positive -
-            negative,
-          );
-
-        const isPolarized =
-          positive > 0 &&
-          negative > 0 &&
-          difference /
-          totalAnalyzed <
-          0.15 &&
-          positive +
-          negative >
-          neutral;
-
-        if (
-          isPolarized
-        ) {
-          overallSentiment =
-            "mixed";
-        } else {
-          overallSentiment =
-            Object.keys(
-              summary,
-            ).reduce(
-              (a, b) =>
-                summary[a] >
-                  summary[b]
-                  ? a
-                  : b,
-            );
-        }
-      }
-
-      const finalResult = {
-        category:
-          "sentiment",
-
-        trendLabel,
-
-        overallSentiment,
-
-        eventCount:
-          data.events.length,
-
-        analyzedCount:
-          results.length,
-
-        unanalyzedCount:
-          data.events.length -
-          results.length,
-
-        platformCounts:
-          getPlatformCounts(
-            data.events,
-          ),
-
-        summary,
-
-        emotions,
-
-        stance,
-
-        sarcasm,
-
-        tierUsage,
-
-        results,
-      };
 
       const duration =
         Date.now() -
@@ -3726,13 +3232,13 @@ function createSentimentWorker() {
       success(
         "Sentiment",
         `DONE job=${job.id} | ` +
-        `${results.length}/${data.events.length} analyzed | ` +
-        `Tier1=${tierUsage.tier1} | ` +
-        `Tier2=${tierUsage.tier2} | ` +
+        `Trend=${trendLabel} | ` +
+        `Result=${result.result} | ` +
+        `Narrative=${result.narrative?.id || 'none'} | ` +
         `${duration}ms`,
       );
 
-      return finalResult;
+      return result;
     },
 
     {

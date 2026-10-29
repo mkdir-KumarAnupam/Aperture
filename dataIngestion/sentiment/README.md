@@ -1,267 +1,157 @@
-<div align="center">
+# ⚡ JEV Sentiment & Narrative Analysis Pipeline
 
-# ⚡ Sentiment Analysis Pipeline
+**A next-generation social media sentiment, affect, and dynamic narrative classification engine for Aperture.**
 
-**A cost-optimised, tiered sentiment classification system for social media posts**
-
-Built for [Smart India Hackathon (SIH) 2026](https://sih.gov.in/)
-
-[![Node.js](https://img.shields.io/badge/Node.js-v18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![BullMQ](https://img.shields.io/badge/BullMQ-Queue%20Worker-red?logo=redis&logoColor=white)](https://bullmq.io/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black?logo=ollama)](https://ollama.com/)
-[![Groq](https://img.shields.io/badge/Groq-Cloud%20API-orange)](https://console.groq.com/)
-
-</div>
+Powered by **TypeSafe AI (JEV SystemOne `jev-1.13.0`)** and an intelligent **Google Gemini LLM Fallback** layer with dynamic narrative pool evolution.
 
 ---
 
-## 📋 Overview
+## 📋 Architectural Overview
 
-This pipeline classifies the sentiment of scraped social media posts (X/Twitter, Reddit, Telegram) using a **three-tier escalation strategy**. It starts with a fast, free local classifier and only escalates to more expensive models when confidence is low — keeping costs near zero for the majority of posts.
-
-```
-                    ┌─────────────────────────────────────┐
-                    │         Incoming Posts (batch)       │
-                    └──────────────┬──────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────────────┐
-                    │  ⚡ TIER 1 — RoBERTa Classifier     │
-                    │  Local · Batch · Instant · Free     │
-                    │  Model: twitter-roberta-base        │
-                    └──────────────┬──────────────────────┘
-                                   │
-                         confidence ≥ 0.75?
-                        ╱                   ╲
-                      YES                    NO
-                       │                      │
-                  ✅ RESOLVED       ┌─────────▼─────────────────┐
-                                    │  🧠 TIER 2 — Local LLM    │
-                                    │  Ollama · Sequential · Free│
-                                    │  Model: qwen2.5:7b         │
-                                    └─────────┬─────────────────┘
-                                              │
-                                    confidence ≥ 0.65?
-                                   ╱                   ╲
-                                 YES                    NO
-                                  │                      │
-                             ✅ RESOLVED       ┌─────────▼─────────────────┐
-                                               │  🌐 TIER 3 — Cloud API    │
-                                               │  Groq · Sequential · Free │
-                                               │  Model: qwen3.8-27b       │
-                                               └───────────────────────────┘
-                                                          │
-                                                     ✅ RESOLVED
-                                                   (final authority)
-```
-
-## ✨ Key Features
-
-| Feature                      | Description                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Batch-First Architecture** | Tier 1 processes all posts in a single batch pass; only uncertain posts escalate                                  |
-| **Chunked Batching**         | Large batches are split into configurable chunks (default: 8) to balance speed and memory                         |
-| **Dual-Run Agreement**       | Tier 2 runs each post twice — disagreement between runs is treated as low confidence, catching LLM overconfidence |
-| **Cost Near Zero**           | ~70% of posts resolve at Tier 1 (free, local). Tier 2 is also free (Ollama). Only ~15% reach the cloud API        |
-| **Configurable Thresholds**  | Fine-tune escalation sensitivity via environment variables                                                        |
-| **Social Media Optimised**   | Tier 1 model is fine-tuned on tweets — handles slang, hashtags, and emojis well                                   |
-| **Worker-Ready**             | Designed as a library — consumed by a BullMQ worker via Redis queue for production workloads                      |
-
-## 🏗️ Architecture
+The JEV Sentiment pipeline replaces legacy multi-tier transformer classifiers with a calibrated, decision-first architecture:
 
 ```
-sentiment-pipeline/
+                     APERTURE SOCIAL DATA INGESTION
+                                    │
+                                    ▼
+                         [SentimentQueue (BullMQ)]
+                                    │
+                         (Canonical job.data payload)
+                                    │
+                        [sentimentWorker.js]
+                                    │
+                       1. Extract trend_label
+                       2. Normalize & rank top 30 posts (by interactions)
+                       3. Retrieve Narrative Pool (Redis 7-Day TTL / PostgreSQL)
+                                    │
+                                    ▼
+                         [JEV SystemOne Model]
+                                    │
+                     ┌──────────────┴──────────────┐
+                     ▼                             ▼
+            Confidence >= 0.70             Confidence < 0.70
+            & narrative matched            or 'none_of_these'
+                     │                             │
+                     │                             ▼
+                     │                 [Gemini LLM Fallback]
+                     │                 (Multi-Key Rotation)
+                     │                             │
+                     │                ┌────────────┴────────────┐
+                     │                ▼                         ▼
+                     │        Match Existing              Propose New
+                     │               │                          │
+                     │               │              1. Atomic PostgreSQL Append (||)
+                     │               │              2. Redis 7-Day Refresh
+                     │               │              3. Follow-up JEV Evaluation
+                     │               │                          │
+                     └───────────────┼──────────────────────────┘
+                                     ▼
+                      [Complete Sentiment Analytics Object]
+                                     │
+                                     ▼
+                              [DatabaseQueue]
+                                     │
+                     [PostgreSQL: trend_sentiment_snapshots]
+```
+
+---
+
+## ✨ Core Analytical Dimensions
+
+1. **4-Way Sentiment Classification**: Discrete calibrated choice across `positive`, `negative`, `neutral`, and `mixed` (with 100% recall on positive and mixed discourses).
+2. **8 Continuous Affect (Emotion) Vectors**: Real-valued intensity scores ($0.0 \to 1.0$) across:
+   - `anger`, `fear`, `joy`, `sadness`, `anxiety`, `excitement`, `outrage`, and `hope`.
+3. **Dynamic Narrative Alignment & Discovery**:
+   - Matches discussions to existing pool narratives.
+   - Evaluates continuous **Relevance** ($0.0 \to 1.0$) and discrete **Stance** (`support`, `oppose`, `neutral`, `discussing`).
+   - Automatically escalates novel, divergent, or sarcastic topics to Gemini to propose brand-new narratives.
+4. **Single-Row JSONB Narrative Pools with Redis Caching**:
+   - Organized 1 row per `trend_label` in PostgreSQL table `trend_narratives`.
+   - Cached in Redis (`narrative_pool:<trend_label>`) with a **7-day TTL** (604,800s).
+
+---
+
+## 📊 Benchmark Scorecard (100 Test Cases / 3,010 Posts)
+
+Evaluated against [`data.json`](file:///D:/Aperture/dataIngestion/sentiment/JEV/data.json) covering 12 stress scenarios (consensus, high conflict, sarcasm, interaction weighting, novel events, boundary limits):
+
+| Metric | Score | Details |
+| :--- | :---: | :--- |
+| **Sentiment Accuracy** | **94.00%** | Macro F1: 91.88% (100% recall on Positive & Mixed) |
+| **Narrative Alignment Accuracy** | **96.00%** | 96 / 100 exact narrative / novelty matches |
+| **Stance Classification Accuracy** | **85.53%** | 65 / 76 applicable cases correctly classified |
+| **Affect / Emotion Hit Rate** | **99.67%** | Near-flawless detection across 8 affect dimensions |
+| **Fallback Calibration** | **98.00%** | Accurately escalates novel/sarcastic topics to Gemini fallback |
+| **All Core Matched (Triple-Match)** | **84.00%** | **84 / 100** simultaneous triple-matches across all 3 tasks |
+| **Average Batch Latency** | **382.3 ms** | Median: 381 ms, p95: 494 ms |
+| **Total Evaluation Time** | **9.63 s** | Evaluated via 4 parallel worker threads |
+
+---
+
+## 💰 Cost Model & Financial Efficiency
+
+TypeSafe AI JEV SystemOne uses a decision-first paradigm rather than generative text streaming:
+* **Output Tokens**: **$0.00 (100% Free)**
+* **Input Tokens**: **$0.042 per 1,000,000 tokens** ($0.000000042 / token)
+
+### Realized Benchmark Consumption
+* **Total Input Tokens (100 Batches / 3,010 Posts)**: 458,957 tokens
+* **Total Benchmark Cost**: **$0.019276 USD** (< 2 cents)
+* **Cost Per Batch (30 posts)**: **$0.000193 USD** (~0.0193¢)
+* **Cost Per Individual Post**: **$0.0000064 USD** (~0.00064¢)
+
+### Cost at Scale
+* **10,000 Batches (300,000 posts)**: **$1.93 USD**
+* **100,000 Batches (3,000,000 posts)**: **$19.28 USD**
+* **1,000,000 Batches (30,000,000 posts)**: **$192.76 USD**
+
+---
+
+## 📁 File Structure
+
+```
+dataIngestion/sentiment/
 ├── src/
-│   ├── pipeline.js       # Orchestrator — batch Tier 1, escalate uncertain posts
-│   ├── tier1.js          # Local transformer classifier (transformers.js)
-│   ├── tier2.js          # Local LLM via Ollama with dual-run agreement check
-│   └── tier3.js          # Cloud API escalation via Groq (OpenAI-compatible)
-├── .env                  # Configuration (API keys, thresholds, models)
-├── .env.example          # Template for environment variables
-└── package.json
+│   ├── sentimentWorker.js        # Core BullMQ worker processor & JEV/LLM execution logic
+│   └── taxonomy.js               # Structured schemas and definitions for sentiment, stance, and affect
+├── tests/
+│   ├── run-benchmark.js          # Automated benchmark runner for data.json
+│   ├── test-pipeline-run.js      # Canonical pipeline test matching producer.js format
+│   ├── test-dual-write.js        # Atomicity and Redis 7-day TTL verification
+│   ├── test-e2e-worker.js        # Relational PostgreSQL persistence verification
+│   ├── test-sentiment.js         # Isolated standalone BullMQ sentiment queue harness
+│   ├── analyze-dataset.js        # Dataset breakdown and distributions utility
+│   ├── diagnose-failures.js      # Granular failure diagnostics utility
+│   └── data.json                 # 100 comprehensive synthetic stress-test cases (3,010 posts)
+├── testresults/
+│   ├── benchmark-results.json    # Full raw prediction outputs from benchmark run
+│   ├── benchmark-summary.json    # Aggregated metrics, confusion matrices, and costing data
+│   └── output.txt                # Job output logs from standalone worker tests
+├── .env                          # Local configuration (ignored by git)
+├── .env.example                  # Template for environment configuration
+├── .gitignore                    # Ignores sensitive environment and dependency files
+├── package.json                  # Module definition and test scripts
+├── README.md                     # Pipeline documentation & benchmark scorecard
+└── jevImplmentation.md           # Full engineering architecture specification
 ```
-
-The pipeline is consumed as a **library** by an external BullMQ worker (`worker.js`) that pulls jobs from a Redis queue. It does not have its own entry point — it exports `analyzeBatch()` and `analyzeSentiment()` for external callers.
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Node.js** v18 or later
-- **Redis** server running (required by BullMQ)
-- **Ollama** installed and running ([download](https://ollama.com/))
-- **Groq API key** (free tier) from [console.groq.com/keys](https://console.groq.com/keys)
-
-### 1. Install Dependencies
-
-```bash
-npm install
-```
-
-### 2. Set Up Ollama (Tier 2)
-
-```bash
-# Install Ollama from https://ollama.com, then pull the model:
-ollama pull qwen2.5:7b-instruct
-
-# Ensure Ollama is running (it may already run as a background service):
-ollama serve
-```
-
-### 3. Configure Environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and paste your Groq API key:
-
-```env
-GROQ_API_KEY=gsk_your_key_here
-```
-
-### 4. Integration
-
-The pipeline is invoked by an external **BullMQ worker** that listens on a Redis queue. Here's how the worker consumes it:
-
-```js
-import { Worker } from "bullmq";
-import { analyzeBatch } from "./sentiment-pipeline/src/pipeline.js";
-
-const sentimentWorker = new Worker(
-  "SentimentQueue",
-  async (job) => {
-    const data = job.data;
-    console.log(`[Sentiment] Processing ${data.targetTrendLabel}...`);
-
-    const results = await analyzeBatch(data.posts);
-
-    console.log("Sentiment worker completed.");
-    return { status: "success", results };
-  },
-  { connection: createRedisConnection() },
-);
-```
-
-To enqueue a job from another service:
-
-```js
-import { Queue } from "bullmq";
-
-const queue = new Queue("SentimentQueue", { connection: redisConnection });
-await queue.add("classify", {
-  targetTrendLabel: "#SIH2026",
-  posts: ["loving the hackathon!", "this is so stressful..."],
-});
-```
-
-### Sample Output
-
-```
-⚡ Phase 1: Batch-classifying 20 posts with Tier 1...
-  [1/20] ✅ tier=1 label=negative confidence=0.95
-  [2/20] ⏳ tier=1 confidence=0.60 → escalating
-  ...
-
-📊 Tier 1 resolved 13/20 posts. Escalating 7 to Tier 2/3...
-
-  [2/20] ✅ tier=3 label=neutral confidence=0.95
-  [4/20] ✅ tier=2 label=neutral confidence=0.70
-  ...
-
-Tier usage: { '1': 13, '2': 4, '3': 3 }
-```
-
-## ⚙️ Configuration
-
-All configuration is done via environment variables in `.env`:
-
-| Variable           | Default                  | Description                              |
-| ------------------ | ------------------------ | ---------------------------------------- |
-| `GROQ_API_KEY`     | —                        | **Required.** Your Groq API key          |
-| `GROQ_MODEL`       | `qwen/qwen3.8-27b`       | Model to use for Tier 3 cloud escalation |
-| `OLLAMA_HOST`      | `http://localhost:11434` | Ollama server URL                        |
-| `OLLAMA_MODEL`     | `qwen2.5:7b-instruct`    | Model to use for Tier 2 local LLM        |
-| `TIER1_THRESHOLD`  | `0.75`                   | Minimum confidence to trust Tier 1 (0–1) |
-| `TIER2_THRESHOLD`  | `0.65`                   | Minimum confidence to trust Tier 2 (0–1) |
-| `TIER1_BATCH_SIZE` | `8`                      | Number of posts per Tier 1 batch chunk   |
-
-### Tuning Guide
-
-- **Too many posts escalating?** → Lower `TIER1_THRESHOLD` (e.g., `0.70`)
-- **Too many wrong answers from Tier 1?** → Raise `TIER1_THRESHOLD` (e.g., `0.80`)
-- **Running out of memory?** → Lower `TIER1_BATCH_SIZE` (e.g., `4`)
-- **Want faster Tier 1?** → Raise `TIER1_BATCH_SIZE` (e.g., `16`) if you have >8GB RAM
-
-> 💡 **Rule of thumb:** If more than ~15% of posts reach Tier 3, consider lowering your Tier 1 threshold or fine-tuning the classifier on your specific dataset.
-
-## 🔬 How Confidence Works
-
-| Tier       | Method                                      | Reliability                                                                            |
-| ---------- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **Tier 1** | Softmax probability from RoBERTa classifier | High — calibrated probability from a trained model                                     |
-| **Tier 2** | Self-reported confidence × agreement check  | Medium — two independent LLM runs must agree; disagreement penalises confidence by 60% |
-| **Tier 3** | Self-reported confidence from cloud model   | Accepted as-is — final authority, no further escalation                                |
-
-## 🔄 Swapping Providers
-
-### Different Local LLM (Tier 2)
-
-Change `OLLAMA_MODEL` in `.env` to any model you've pulled:
-
-```env
-OLLAMA_MODEL=llama3.1:8b-instruct
-# or
-OLLAMA_MODEL=phi4-mini
-```
-
-### Different Cloud API (Tier 3)
-
-`src/tier3.js` uses an OpenAI-compatible chat endpoint. To switch providers (OpenRouter, Together AI, etc.), update the URL and auth header — the request/response format is identical:
-
-```js
-const GROQ_URL = "https://openrouter.ai/api/v1/chat/completions";
-```
-
-## 📊 Output Format
-
-Each classified post in `results.json` has this shape:
-
-```json
-{
-  "text": "absolutely loving the new feature, works flawlessly!!",
-  "label": "positive",
-  "confidence": 0.99,
-  "tier": 1,
-  "reason": "Strong positive language with enthusiasm"
-}
-```
-
-| Field        | Type      | Description                                |
-| ------------ | --------- | ------------------------------------------ |
-| `text`       | `string`  | The original post text                     |
-| `label`      | `string`  | `"positive"`, `"neutral"`, or `"negative"` |
-| `confidence` | `number`  | Confidence score (0–1)                     |
-| `tier`       | `number`  | Which tier resolved this post (1, 2, or 3) |
-| `reason`     | `string?` | Explanation (only from Tier 2 and Tier 3)  |
-
-## 🛣️ Roadmap
-
-- [ ] Fine-grained emotion classification (happy, sad, angry, fearful, surprised)
-- [ ] Aspect-based sentiment analysis
-- [ ] Multi-label emotion support
-- [ ] CSV/JSON file input for bulk processing
-- [ ] Dashboard for visualising sentiment trends
-- [ ] WebSocket streaming for real-time classification
-
-## 📄 License
-
-This project is part of the **Smart India Hackathon (SIH) 2026** initiative.
 
 ---
 
-<div align="center">
+## 🚀 Running Tests & Benchmarks
 
-**Built with ❤️ for SIH 2026**
+```bash
+# Navigate to dataIngestion directory
+cd dataIngestion
 
-</div>
+# 1. Run the 100-case synthetic benchmark suite
+node sentiment/tests/run-benchmark.js
+
+# 2. Test canonical Aperture pipeline payload (simulating producer.js)
+node sentiment/tests/test-pipeline-run.js
+
+# 3. Test atomic PostgreSQL JSONB dual-write & Redis 7-day TTL
+node sentiment/tests/test-dual-write.js
+
+# 4. Test complete end-to-end database snapshot persistence
+node sentiment/tests/test-e2e-worker.js
+```

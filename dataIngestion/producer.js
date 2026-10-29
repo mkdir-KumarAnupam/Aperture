@@ -870,6 +870,7 @@ async function fetchBulkStreamData(
       `${newResult.failed.length} message(s) failed validation and remain pending in the stream.`
     );
   }
+  console.log(allPrepared);
 
   return allPrepared;
 }

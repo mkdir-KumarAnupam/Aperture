@@ -29,7 +29,7 @@ The system implements a **Hybrid Edge-to-Core** architecture designed to minimiz
 └─────────────────────────────────┘
           │
           ├─── Scatter (Parallel Fan-Out)
-          │    ├── SentimentQueue     --> [ Sentiment Worker ]
+          │    ├── SentimentQueue     --> [ Sentiment Worker (TypeSafe AI JEV) ]
           │    ├── DemographicQueue   --> [ Demographic Worker ]
           │    ├── TrendQueue         --> [ Trend Worker ]
           │    └── NetworkQueue       --> [ Network Worker ]
@@ -49,6 +49,7 @@ The system implements a **Hybrid Edge-to-Core** architecture designed to minimiz
 - **Edge Ingestion (Upstash Redis):** Functions strictly as a public ingress point for scrapers. Data is read in bulk and deleted immediately, keeping memory footprint and command counts within free-tier limits.
 - **Core Orchestration (Local Docker Redis):** High-frequency queue state operations (polling, locking, heartbeats, and job trees) execute entirely on a dedicated local Redis instance with Append-Only File (AOF) persistence, incurring zero cloud request fees.
 - **Scatter-Gather (BullMQ Flows):** Dispatches analytical jobs across specialized worker pools in parallel. The parent task wakes only when all child tasks have resolved, preventing partial writes and database race conditions.
+- **Decision-First Sentiment Analytics (JEV SystemOne):** Evaluates batches using TypeSafe AI's JEV SystemOne with Google Gemini LLM fallback, delivering calibrated 4-way sentiment, 8 continuous affect dimensions, and dynamic narrative discovery at $0.042/1M input tokens ($0.00 output tokens).
 
 ---
 
@@ -127,16 +128,37 @@ The producer normalizes posts into a standardized contract and bundles them unde
 
 ### 3. Child Worker Outputs (Return Payloads)
 
-Each specialized worker extracts relevant dimensions from `job.data.posts`, completes its computation, and returns an isolated diagnostic object. A temporary category identifier is attached to guide parent aggregation:
+Each specialized worker extracts relevant dimensions from `job.data.posts`, completes its computation, and returns an isolated diagnostic object:
 
-**Sentiment Worker (SentimentQueue)**
+**Sentiment Worker (SentimentQueue - TypeSafe AI JEV SystemOne)**
 
 ```json
 {
   "category": "sentiment",
+  "trend_label": "#AIRevolution",
   "result": "positive",
   "score": 0.91,
-  "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06 }
+  "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06, "mixed": 0.00 },
+  "affect": {
+    "joy": 0.82,
+    "excitement": 0.75,
+    "hope": 0.68,
+    "anger": 0.02,
+    "fear": 0.04,
+    "sadness": 0.03,
+    "anxiety": 0.06,
+    "outrage": 0.01
+  },
+  "narrative": {
+    "id": "2d036851-170a-4865-81af-576f23178265",
+    "text": "The rapid pace of open-source AI models is transforming developer productivity.",
+    "confidence": 0.98,
+    "source": "jev",
+    "relevance": 0.92,
+    "stance": { "label": "support", "probability": 0.95 }
+  },
+  "proposedNarrative": null,
+  "meta": { "status": "ok", "model": "jev-1.13.0" }
 }
 ```
 
@@ -183,14 +205,23 @@ The parent worker holds minimal state in `job.data`:
 }
 ```
 
-Upon execution, it calls `job.getChildrenValues()` to pull results from all completed child tasks. It strips the operational category tag and compiles the children into a structured dictionary:
+Upon execution, it calls `job.getChildrenValues()` to pull results from all completed child tasks. It compiles the children into a structured dictionary for direct JSONB persistence:
 
 ```json
 {
   "sentiment": {
     "result": "positive",
     "score": 0.91,
-    "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06 }
+    "distribution": { "positive": 0.74, "neutral": 0.20, "negative": 0.06, "mixed": 0.00 },
+    "affect": { "joy": 0.82, "excitement": 0.75, "hope": 0.68, "anger": 0.02, "fear": 0.04, "sadness": 0.03, "anxiety": 0.06, "outrage": 0.01 },
+    "narrative": {
+      "id": "2d036851-170a-4865-81af-576f23178265",
+      "text": "The rapid pace of open-source AI models is transforming developer productivity.",
+      "confidence": 0.98,
+      "source": "jev",
+      "relevance": 0.92,
+      "stance": { "label": "support", "probability": 0.95 }
+    }
   },
   "demographic": {
     "dominantAgeGroup": "25-34",
@@ -225,13 +256,15 @@ CREATE TABLE IF NOT EXISTS trend_analytics (
 CREATE INDEX IF NOT EXISTS idx_trend_label ON trend_analytics (trend_label);
 ```
 
-**Final Persisted Database Record**
+**Single-Row Narrative Pools (`trend_narratives`)**
 
-```text
-id            │ 1042
-trend_label   │ #AIRevolution
-combined_data │ {"trend": {...}, "network": {...}, "sentiment": {...}, "demographic": {...}}
-created_at    │ 2026-09-14 17:42:10.128492+00
+```sql
+CREATE TABLE IF NOT EXISTS trend_narratives (
+    trend_label TEXT PRIMARY KEY,
+    narratives JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ---
@@ -244,20 +277,15 @@ created_at    │ 2026-09-14 17:42:10.128492+00
 - Docker & Docker Compose
 - PostgreSQL database (e.g., NeonDB)
 - Upstash Redis database (with Stream support)
+- TypeSafe AI API Key (`TYPESAFE_API_KEY`)
+- Google Gemini API Key (`LLM_API_KEYS`) for fallback
 
 ### 2. Environment Variables
 
-Create a `.env` file in the root directory:
+Configure `.env` using `.env.example`:
 
-```
-# Upstash Redis (Cloud Stream Ingestion)
-UPSTASH_REDIS_URL="rediss://default:your-upstash-key@your-region.upstash.io:6379"
-
-# Local Docker Redis (BullMQ Processing Core)
-LOCAL_REDIS_URL="redis://127.0.0.1:6379"
-
-# PostgreSQL / NeonDB Connection String
-DATABASE_URL="postgresql://user:password@your-endpoint.neon.tech/neondb?sslmode=require"
+```bash
+cp sentiment/.env.example sentiment/.env
 ```
 
 ### 3. Start Local Queue Broker
@@ -270,38 +298,20 @@ docker compose up -d
 
 ### 4. Initialize Database Schema
 
-Execute the schema migration against PostgreSQL:
+Execute schema migrations against PostgreSQL:
 
 ```bash
-node migrate.js
+node db/migrate.js
 ```
 
 ### 5. Start Pipeline Processes
 
-Run the consumers and producer in dedicated terminal sessions:
-
 ```bash
 # Terminal 1: Run analytical workers & aggregator
-node workers.js
+node worker.js
 
-# Terminal 2: Run ingestion orchestrator
+# Terminal 2: Run ingestion producer
 node producer.js
 ```
 
----
-
-## Querying JSONB Analytics
-
-Because PostgreSQL natively indexes binary JSON, analytical fields can be queried directly without full document scans:
-
-```sql
--- Find viral trends with strong positive sentiment
-SELECT 
-    trend_label,
-    (combined_data->'trend'->>'velocity')::numeric AS velocity,
-    (combined_data->'sentiment'->>'score')::numeric AS sentiment_score
-FROM trend_analytics
-WHERE (combined_data->'trend'->>'isViral')::boolean = true
-  AND (combined_data->'sentiment'->>'score')::numeric > 0.85
-ORDER BY velocity DESC;
-```
+For detailed benchmarks and accuracy metrics on the sentiment worker, see [`sentiment/README.md`](sentiment/README.md).
