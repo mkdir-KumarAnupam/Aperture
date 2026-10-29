@@ -171,6 +171,17 @@ select:focus {
 .node { transition: filter .2s ease, transform .2s ease; }
 .node:hover { filter: drop-shadow(0 4px 8px rgba(0,0,0,.12)); }
 
+@keyframes pulseBeacon {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.65); opacity: 0; }
+  100% { transform: scale(0.95); opacity: 0; }
+}
+.pulse-beacon {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulseBeacon 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 .segmented-scale { display: flex; height: 8px; width: 80px; border-radius: 4px; overflow: hidden; }
 .segmented-scale span { flex: 1; height: 100%; }
 .seg-1 { background-color: #e8f0fe; }
@@ -201,58 +212,279 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 input[type=range]:focus::-webkit-slider-thumb { outline: 2px solid #aecbfa; outline-offset: 2px; }
 
 /* Presentation Mode */
-body.presentation-mode { overflow: hidden; margin: 0; padding: 0; }
-body.presentation-mode nav, body.presentation-mode aside, body.presentation-mode header { display: none !important; }
-body.presentation-mode #mainLayout { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
-body.presentation-mode #splitLayout { display: block !important; margin: 0 !important; width: 100vw; height: 100vh; }
-body.presentation-mode .timeline::before, body.presentation-mode .timeline section .marker { display: none !important; }
-body.presentation-mode article {
-  display: grid !important;
+body.presentation-mode {
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw;
+  height: 100vh;
+}
+body.presentation-mode nav,
+body.presentation-mode aside,
+body.presentation-mode header {
+  display: none !important;
+}
+
+body.presentation-mode #mainLayout,
+body.presentation-mode #splitLayout {
+  position: fixed !important;
+  inset: 0 !important;
   width: 100vw !important;
   height: 100vh !important;
-  max-width: none !important;
-  place-items: center;
-  padding-bottom: 4rem;
-}
-
-.present-cover { display: none; }
-body.presentation-mode .present-cover { display: flex; flex-direction: column; align-items: center; text-align: center; }
-
-body.presentation-mode article > section {
-  grid-area: 1 / 1;
-  width: 100% !important;
-  max-width: 1300px !important;
   margin: 0 !important;
-  padding: 2rem 4rem !important;
-  opacity: 0 !important;
-  pointer-events: none;
-  transform: translateX(120px) scale(0.98) !important;
-  transition: opacity 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  padding: 0 !important;
+  max-width: none !important;
+  overflow: hidden !important;
+  display: block !important;
+  z-index: 20;
 }
-body.presentation-mode article > section.active-slide {
-  opacity: 1 !important;
-  pointer-events: auto;
-  transform: translateX(0) scale(1) !important;
-}
-body.presentation-mode article > section.past-slide { transform: translateX(-120px) scale(0.98) !important; }
 
-body.presentation-mode article > section h2 { text-align: center; font-size: 2.2rem; margin-bottom: 1rem; }
-body.presentation-mode article > section > p { text-align: center; font-size: 1.25rem; max-width: 900px; margin-inline: auto; margin-bottom: 2.5rem; }
+body.presentation-mode .timeline::before,
+body.presentation-mode .timeline section .marker {
+  display: none !important;
+}
+
+body.presentation-mode article {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  max-width: none !important;
+  overflow: hidden !important;
+  display: block !important;
+  z-index: 21;
+}
+
+/* Presentation Slides: Dead Center Position & Clean Display Isolation */
+body.presentation-mode article > section {
+  display: none !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(94vw, 1240px) !important;
+  max-width: 1240px !important;
+  max-height: 90vh !important;
+  margin: 0 !important;
+  padding: 1.5rem 1.5rem 5.5rem 1.5rem !important;
+  border-top: none !important;
+  box-sizing: border-box !important;
+  overflow-y: auto !important;
+  scrollbar-width: none !important;
+}
+body.presentation-mode article > section::-webkit-scrollbar {
+  display: none;
+}
+
+body.presentation-mode article > section.active-slide {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: translate(-50%, -50%) scale(1) !important;
+  z-index: 30;
+  animation: slideFadeIn 0.22s ease-out forwards;
+}
+
+@keyframes slideFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -49.5%) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+body.presentation-mode article > section.past-slide {
+  display: none !important;
+}
+
+/* 00 — Slide Cover */
+.present-cover { display: none; }
+body.presentation-mode .present-cover.active-slide {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  width: min(94vw, 1080px) !important;
+  max-width: 1080px !important;
+}
+body.presentation-mode .present-cover h1 {
+  font-size: clamp(2.4rem, 4.5vw, 3.6rem) !important;
+  line-height: 1.15 !important;
+  margin-bottom: 0.75rem !important;
+}
+body.presentation-mode .present-cover p.text-xl,
+body.presentation-mode .present-cover p.text-base {
+  font-size: 1.125rem !important;
+  max-width: 760px !important;
+  margin-bottom: 2rem !important;
+  line-height: 1.55 !important;
+}
+body.presentation-mode .present-cover .grid {
+  padding: 2rem 3rem !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Presentation Slide Headers & Descriptions */
+.presentation-only { display: none !important; }
+body.presentation-mode .presentation-only { display: flex !important; }
+
+body.presentation-mode article > section:not(.present-cover) h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  color: #202124;
+}
+body.presentation-mode article > section > p {
+  font-size: 0.925rem;
+  color: #5f6368;
+  margin-bottom: 1rem;
+  line-height: 1.45;
+}
+
+/* Presentation Interactive Cards */
 body.presentation-mode .interactive-card {
   transform: none !important;
-  box-shadow: 0 16px 50px rgba(0,0,0,0.06);
-  border: 1px solid #f1f3f4;
-  padding: 3rem;
-  border-radius: 1.5rem;
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e8eaed;
+  padding: 1.25rem 1.75rem !important;
+  border-radius: 1.25rem !important;
   background: #fff;
 }
-body.presentation-mode #kwList { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; max-width: 100%; padding: 2rem; }
+
+body.presentation-mode .keywords-section,
+body.presentation-mode article > section:not(.slide-panel) {
+  display: none !important;
+}
+
+/* Slide 3: Demographics Slide Calibration */
+body.presentation-mode .present-demo-panel {
+  max-width: min(94vw, 1080px) !important;
+  padding: 2.5rem 1.5rem 2.5rem 1.5rem !important;
+}
+body.presentation-mode .trend-demographics-card {
+  padding: 2.25rem 2.5rem !important;
+  border-radius: 1.5rem !important;
+  box-shadow: 0 4px 28px -2px rgba(0, 0, 0, 0.04) !important;
+}
+body.presentation-mode .demo-age-container {
+  max-width: 290px !important;
+  padding: 0.6rem 0 !important;
+}
+body.presentation-mode .demo-age-container > div {
+  margin-bottom: 0.75rem !important;
+}
+body.presentation-mode .demo-age-container .bg-\[\#f1f3f4\] {
+  height: 0.45rem !important;
+}
+body.presentation-mode .demo-age-container .bg-\[\#f1f3f4\] > div {
+  height: 0.45rem !important;
+}
+
+body.presentation-mode .lang-donut-container {
+  width: 185px !important;
+  height: 185px !important;
+}
+body.presentation-mode .lang-donut-container span.tnum {
+  font-size: 2.15rem !important;
+}
+body.presentation-mode .demo-lang-matrix {
+  max-width: 280px !important;
+  gap: 0.45rem !important;
+  padding-top: 0.85rem !important;
+}
+body.presentation-mode .demo-lang-matrix > div {
+  padding: 0.35rem 0.65rem !important;
+  font-size: 0.725rem !important;
+}
+
+body.presentation-mode .demo-cohorts-ribbons {
+  height: 200px !important;
+  gap: 0.65rem !important;
+}
+body.presentation-mode .demo-cohort-ribbon {
+  width: 26px !important;
+  padding: 0.75rem 0.15rem !important;
+}
+body.presentation-mode .demo-cohort-ribbon span {
+  font-size: 10px !important;
+  line-height: 1.15 !important;
+}
+
+/* Slide 5: Network spread height calibration */
+body.presentation-mode .trend-network-card {
+  padding: 1.25rem 1.75rem 0.5rem 1.75rem !important;
+}
+body.presentation-mode .trend-network-card > div:first-child {
+  min-height: min(52vh, 430px) !important;
+  padding: 0.5rem !important;
+}
+body.presentation-mode .trend-network-card svg {
+  max-height: min(52vh, 430px) !important;
+  height: min(52vh, 430px) !important;
+  width: auto !important;
+  max-width: 100% !important;
+  margin: 0 auto;
+}
+
+/* Slide 6: Standard Scrollbox vs Presentation 6-Card Grid */
+.present-quotes-grid { display: none !important; }
+body.presentation-mode .normal-feed-box { display: none !important; }
+body.presentation-mode .present-quotes-grid { display: grid !important; }
+
+/* Presentation Mode: Map Slide Adjustments */
+body.presentation-mode .present-map-panel {
+  max-width: min(94vw, 1020px) !important;
+}
+body.presentation-mode .present-map-panel h2 {
+  font-size: 1.5rem !important;
+  margin-bottom: 0.25rem !important;
+}
+body.presentation-mode .present-map-panel p.map-desc {
+  font-size: 0.925rem !important;
+  margin-bottom: 0.75rem !important;
+}
+body.presentation-mode .trend-map-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 auto !important;
+  padding: 1.25rem 1.75rem !important;
+  min-height: min(68vh, 580px) !important;
+  border-radius: 1.25rem !important;
+}
+body.presentation-mode .trend-map-inner {
+  height: min(68vh, 560px) !important;
+  min-height: min(68vh, 560px) !important;
+}
+body.presentation-mode .trend-map-card svg {
+  max-height: 100% !important;
+  height: 100% !important;
+  width: 100% !important;
+}
 
 #presentNav, #exitPresentBtn, #presentProgress { opacity: 0; pointer-events: none; transition: all 0.4s ease; }
-body.presentation-mode #exitPresentBtn { opacity: 1; pointer-events: auto; }
-body.presentation-mode #presentNav { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
-body.presentation-mode #presentProgress { opacity: 1; }
-#presentProgress { position: fixed; top: 0; left: 0; height: 4px; background: #e8eaed; width: 100vw; z-index: 100; }
+body.presentation-mode #exitPresentBtn {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 40;
+  top: 1.5rem;
+  right: 1.5rem;
+}
+body.presentation-mode #presentNav {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 40;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+body.presentation-mode #presentProgress { opacity: 1; z-index: 40; }
+#presentProgress { position: fixed; top: 0; left: 0; height: 4px; background: #e8eaed; width: 100vw; z-index: 40; }
 #presentProgressBar { height: 100%; background: #1a73e8; transition: width 0.4s ease; width: 0%; }
 
 @media (prefers-reduced-motion: reduce) {

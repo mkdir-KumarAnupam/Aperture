@@ -1,10 +1,11 @@
 import React from "react";
 
 export type SupportedPlatform = "x" | "reddit" | "telegram";
+export type PlatformIconSize = "xs" | "sm" | "md" | "lg" | "xl";
 
 interface PlatformIconProps {
   platform: string;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: PlatformIconSize;
   shape?: "circle" | "rounded";
   className?: string;
   customBg?: string;
@@ -44,6 +45,7 @@ export function PlatformIcon({
   const meta = getPlatformMeta(norm);
 
   const iconSizes = {
+    xs: norm === "x" ? "w-2 h-2" : "w-2.5 h-2.5",
     sm: norm === "x" ? "w-2.5 h-2.5" : "w-3 h-3",
     md: norm === "x" ? "w-3.5 h-3.5" : "w-4 h-4",
     lg: norm === "x" ? "w-5 h-5" : "w-5 h-5",
@@ -51,6 +53,7 @@ export function PlatformIcon({
   };
 
   const badgeSizes = {
+    xs: "w-4 h-4",
     sm: "w-[22px] h-[22px]",
     md: "w-7 h-7",
     lg: "w-10 h-10",

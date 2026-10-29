@@ -83,9 +83,9 @@ export function TrendNetwork({ topic, range }: { topic: any; range: string }) {
       </div>
       <p className="text-sm text-gray-500 leading-relaxed mb-4">Minimalist representation of top influence hubs across communities. Scrub the timeline to view progression.</p>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 relative overflow-hidden interactive-card">
-        <div className="w-full min-h-[320px] flex items-center justify-center p-4">
-          <svg viewBox="0 0 620 320" style={{ width: '100%', height: 'auto', aspectRatio: '620/320' }}>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 relative overflow-hidden interactive-card trend-network-card">
+        <div className="w-full min-h-[260px] flex items-center justify-center p-3 sm:p-4">
+          <svg className="trend-network-svg" viewBox="0 0 620 320" style={{ width: '100%', height: 'auto', aspectRatio: '620/320' }}>
             <defs>
               <pattern id="netGrid" width="40" height="40" patternUnits="userSpaceOnUse">
                 <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#f1f3f4" strokeWidth="1" />

@@ -163,10 +163,9 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
       if (target) {
         const sName = target.getAttribute('data-sname');
         const score = target.getAttribute('data-score');
-        const isOrigin = target.getAttribute('data-origin') === 'true';
         const hostRect = host.getBoundingClientRect();
         setTip({
-          html: `<p class="font-bold text-white mb-0.5">${sName} ${isOrigin ? '<span class="text-[#fbbc04] ml-1">(Origin)</span>' : ''}</p><p class="text-gray-400">Relevance score: <span class="text-white font-medium">${score}</span></p>`,
+          html: `<p class="font-bold text-white mb-0.5">${sName}</p><p class="text-gray-400">Relevance score: <span class="text-white font-medium">${score}</span></p>`,
           x: ev.clientX - hostRect.left,
           y: ev.clientY - hostRect.top
         });
@@ -193,8 +192,8 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
   }, [mapState, mapSvgStr, topic, region, selectedState, zoom, setSelectedState]);
 
   return (
-    <div className="relative w-full min-h-[350px] bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden interactive-card">
-      <div ref={mapRef} className="w-full h-[350px] flex items-center justify-center">
+    <div className="relative w-full min-h-[500px] bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden interactive-card trend-map-card">
+      <div ref={mapRef} className="w-full h-[500px] flex items-center justify-center trend-map-inner">
         {mapState === 'loading' && <p className="text-sm font-medium text-gray-400 animate-pulse">Loading map geometry...</p>}
         {mapState === 'fail' && <p className="text-sm text-gray-400">Map data unavailable.</p>}
       </div>
@@ -212,12 +211,25 @@ export function TrendMap({ topic, region, selectedState, setSelectedState }: { t
         <button onClick={() => setZoom((z) => Math.max(1, z - 0.5))} className="w-8 h-8 hover:bg-gray-50 hover:text-blue-600 transition-colors text-lg" aria-label="Zoom out">−</button>
       </div>
 
-      <div className="absolute bottom-4 left-4 bg-white/95 px-3 py-2 rounded-lg border border-gray-100 shadow-sm text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-3">
-        Low
+      <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-xs px-3 py-2 rounded-lg border border-gray-100 shadow-sm text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2 select-none z-10">
+        <span>Low</span>
         <div className="segmented-scale">
           <span className="seg-1"></span><span className="seg-2"></span><span className="seg-3"></span><span className="seg-4"></span><span className="seg-5"></span>
         </div>
-        High
+        <span>High</span>
+      </div>
+
+      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-xs px-3 py-2 rounded-lg border border-gray-100 shadow-sm flex items-center gap-1.5 select-none z-10">
+        <span 
+          className="w-3.5 h-3.5 rounded-[3px] border border-[#f9ab00] shrink-0 shadow-xs" 
+          style={{ 
+            backgroundColor: '#fbbc04',
+            backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.75) 2px, rgba(255,255,255,0.75) 4px)'
+          }}
+        />
+        <span className="text-[11px] font-semibold text-gray-700 whitespace-nowrap">
+          Trend origin
+        </span>
       </div>
     </div>
   );

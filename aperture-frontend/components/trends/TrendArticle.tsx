@@ -1,13 +1,14 @@
 "use client";
 
 import { TrendChart } from "./TrendChart";
-import { TrendEmotions } from "./TrendEmotions";
 import { TrendDemographics } from "./TrendDemographics";
 import { TrendMap } from "./TrendMap";
 import { TrendNetwork } from "./TrendNetwork";
-import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf } from "@/lib/data";
+import { NarrativeLandscape } from "./NarrativeLandscape";
+import { hash, rng, EMO, QUOTE, fmt, volOf, reachOf, getNarrativesForTopic } from "@/lib/data";
 import { useEffect, useState } from "react";
 import { PlatformIcon } from "./PlatformIcon";
+
 
 export function TrendArticle({
   topic,
@@ -58,28 +59,31 @@ export function TrendArticle({
     <article className="flex-grow w-full order-1 lg:order-2 timeline min-w-0">
       {/* 00 — Presentation Cover */}
       <section className="present-cover slide-panel">
-        <p className="text-sm font-bold text-gray-400 uppercase tracking-[0.2em] mb-4">
-          {topic.cat} | SYNC LIVE
-        </p>
-        <h1 className="text-6xl font-bold text-gray-900 mb-6 leading-tight tracking-tight">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50/90 border border-blue-100 text-blue-700 text-xs font-semibold uppercase tracking-wider mb-5">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
+          <span>{topic.cat}</span>
+          <span className="text-blue-300">|</span>
+          <span>Executive Research Briefing</span>
+        </div>
+        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-5 leading-tight tracking-tight">
           {topic.name}
         </h1>
-        <p className="text-xl text-gray-500 max-w-3xl mb-14 leading-relaxed">
+        <p className="text-base sm:text-lg lg:text-xl text-gray-500 max-w-2xl mb-10 leading-relaxed font-normal">
           {topic.desc}
         </p>
 
-        <div className="grid grid-cols-3 gap-8 bg-white border border-gray-100 p-10 rounded-2xl shadow-sm w-full max-w-3xl">
+        <div className="grid grid-cols-3 gap-6 lg:gap-8 bg-white border border-gray-200/80 p-8 lg:p-10 rounded-2xl shadow-sm w-full max-w-3xl">
           <div>
-            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Mentions</p>
-            <p className="text-4xl font-bold text-gray-900">{fmt(volOf(topic, selectedState, region))}</p>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Mentions</p>
+            <p className="text-3xl lg:text-4xl font-extrabold text-gray-900 tnum">{fmt(volOf(topic, selectedState, region))}</p>
           </div>
-          <div className="border-l border-gray-200 pl-8">
-            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Reach</p>
-            <p className="text-4xl font-bold text-gray-900">{fmt(reachOf(topic, selectedState, region))}</p>
+          <div className="border-l border-gray-100 pl-6 lg:pl-8">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Total Reach</p>
+            <p className="text-3xl lg:text-4xl font-extrabold text-gray-900 tnum">{fmt(reachOf(topic, selectedState, region))}</p>
           </div>
-          <div className="border-l border-gray-200 pl-8">
-            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">Growth</p>
-            <p className="text-4xl font-bold text-blue-600">+{topic.growth}%</p>
+          <div className="border-l border-gray-100 pl-6 lg:pl-8">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Growth Velocity</p>
+            <p className="text-3xl lg:text-4xl font-extrabold text-blue-600 tnum">+{topic.growth}%</p>
           </div>
         </div>
       </section>
@@ -87,6 +91,12 @@ export function TrendArticle({
       {/* 01 — chart */}
       <section className="reveal in slide-panel">
         <div className="marker">1</div>
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
+        </div>
         <div className="flex items-baseline justify-between gap-4 mb-3">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Interest over time</h2>
           <label className="flex items-center gap-2 text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none shrink-0 hover:text-gray-800 transition-colors">
@@ -99,19 +109,32 @@ export function TrendArticle({
         
       </section>
 
-      {/* 02 — emotion */}
+      {/* 02 — narrative landscape */}
       <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
         <div className="marker">2</div>
-        <div className="flex items-center justify-center lg:justify-start gap-3 mb-3 flex-wrap">
-          <h2 className="text-xl font-bold text-gray-900 tracking-tight">Emotion mix</h2>
-          <span className="text-[11px] font-bold text-blue-600 bg-blue-50/80 px-2.5 py-1 rounded-full">NLP-derived</span>
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
         </div>
-        <TrendEmotions topic={topic} />
+        <NarrativeLandscape
+          narratives={topic.narratives || getNarrativesForTopic(topic.id)}
+          topicName={topic.name}
+          topicId={topic.id}
+          topic={topic}
+        />
       </section>
 
       {/* 03 — demographics */}
-      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
+      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel present-demo-panel">
         <div className="marker">3</div>
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
+        </div>
         <div className="flex items-center justify-center lg:justify-start gap-3 mb-3 flex-wrap">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Who&apos;s talking</h2>
           <span className="text-[11px] font-bold text-purple-600 bg-purple-50/80 px-2.5 py-1 rounded-full">AI-inferred</span>
@@ -120,30 +143,16 @@ export function TrendArticle({
         <TrendDemographics topic={topic} />
       </section>
 
-      {/* 04 — keywords */}
-      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
+      {/* 04 — map */}
+      <section className="reveal in pt-4 border-t border-gray-100/50 slide-panel present-map-panel">
         <div className="marker">4</div>
-        <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-3">Breakout keywords</h2>
-        <p className="text-sm text-gray-500 leading-relaxed mb-6">Terms whose share of the conversation jumped this window, ranked by the size of the jump.</p>
-        <div className="space-y-1 max-w-md bg-white p-2 rounded-xl border border-gray-100 shadow-sm stagger interactive-card">
-          {topic.kw.map((k: string, i: number) => {
-            const g = [3200, 780, 410, 260, 190][i] + (hash(k) % 90);
-            return (
-              <div key={k} className="flex items-center justify-between gap-3 py-2.5 px-3 rounded-lg kwrow">
-                <span className="text-sm font-medium text-gray-800 truncate">{k}</span>
-                <span className={`text-[11px] font-bold shrink-0 tnum ${i === 0 ? 'text-blue-600 bg-blue-50/80 px-2 py-0.5 rounded' : 'text-green-600'}`}>
-                  {i === 0 ? 'Breakout' : '+' + g + '%'}
-                </span>
-              </div>
-            );
-          })}
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
         </div>
-      </section>
-
-      {/* 05 — map */}
-      <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
-        <div className="marker">5</div>
-        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5 map-header">
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Regional distribution</h2>
           {selectedState && (
             <button onClick={() => setSelectedState(null)} className="text-[11px] font-medium text-red-600 bg-red-50 px-2 py-1 rounded hover:bg-red-100 transition-colors">
@@ -151,23 +160,36 @@ export function TrendArticle({
             </button>
           )}
         </div>
-        <p className="text-sm text-gray-500 leading-relaxed mb-6">Relevance score by state for this window. The origin region where the trend primarily started is highlighted in vibrant yellow.</p>
+        <p className="text-sm text-gray-500 leading-relaxed mb-3 map-desc">Relevance score by state for this window. The origin region where the trend primarily started is highlighted in vibrant yellow.</p>
         <TrendMap topic={topic} region={region} selectedState={selectedState} setSelectedState={setSelectedState} />
       </section>
 
-      {/* 06 — network */}
+      {/* 05 — network */}
       <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
-        <div className="marker">6</div>
+        <div className="marker">5</div>
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
+        </div>
         <TrendNetwork topic={topic} range={range} />
       </section>
 
-      {/* 07 — feed */}
+      {/* 06 — feed */}
       <section className="reveal in pt-6 border-t border-gray-100/50 slide-panel">
-        <div className="marker">7</div>
+        <div className="marker">6</div>
+        <div className="slide-kicker presentation-only items-center gap-2 text-xs uppercase tracking-wider mb-2 select-none">
+          <span className="px-2 py-0.5 rounded-md bg-blue-50/90 border border-blue-100/80 font-bold text-blue-700 text-[10px] tracking-widest">{topic.cat}</span>
+          <span className="text-gray-900 font-bold tracking-tight text-xs">{topic.name}</span>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-400 font-medium tracking-normal text-[11px] normal-case">Executive Research Briefing</span>
+        </div>
         <h2 className="text-xl font-bold text-gray-900 tracking-tight mb-3">What they&apos;re saying</h2>
         <p className="text-sm text-gray-500 leading-relaxed mb-6">Representative synthetic quotes capturing the core sentiment breakdown of the selected window.</p>
 
-        <div className="interactive-card bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+        {/* Normal scrollable feed in standard reading mode */}
+        <div className="normal-feed-box interactive-card bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
           <div className="max-h-[380px] overflow-y-auto scroll p-2">
             {feed.map((f) => (
               <div key={f.id} className="p-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
@@ -184,7 +206,7 @@ export function TrendArticle({
                     className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest"
                     style={{ 
                       color: f.emObj.c, 
-                      backgroundColor: `${f.emObj.c}15` // light tinted background
+                      backgroundColor: `${f.emObj.c}15`
                     }}
                   >
                     {f.emObj.label}
@@ -193,6 +215,41 @@ export function TrendArticle({
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Expansive 6-quote grid in presentation mode */}
+        <div className="present-quotes-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          {feed.slice(0, 6).map((f) => (
+            <div
+              key={f.id}
+              className="bg-white border border-gray-200/90 rounded-xl p-4 shadow-sm flex flex-col justify-between hover:border-gray-300 transition-all"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <PlatformIcon platform={f.plat.id || f.plat.n} size="sm" />
+                    <span className="text-[12px] font-bold text-gray-800">@user_{f.userId}</span>
+                  </div>
+                  <span className="text-[11px] text-gray-400 font-medium">{f.ago}</span>
+                </div>
+                <p className="text-[13px] text-gray-700 font-medium leading-snug mb-3">
+                  “{f.text}”
+                </p>
+              </div>
+              <div className="pt-2 border-t border-gray-50 flex items-center justify-between">
+                <span
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                  style={{
+                    color: f.emObj.c,
+                    backgroundColor: `${f.emObj.c}15`,
+                  }}
+                >
+                  {f.emObj.label}
+                </span>
+                <span className="text-[11px] font-medium text-gray-400 capitalize">{f.plat.n}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
     </article>
