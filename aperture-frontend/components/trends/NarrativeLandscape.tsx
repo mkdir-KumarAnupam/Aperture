@@ -1,14 +1,17 @@
 "use client";
 
 import { useState, useMemo, useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Narrative, Platform, NarrativeSentiment } from "@/lib/types";
 import { fmt } from "@/lib/data";
 import { PlatformIcon } from "./PlatformIcon";
+import { TrendEmotions } from "./TrendEmotions";
 
 interface NarrativeLandscapeProps {
   narratives?: Narrative[];
   topicName?: string;
   topicId?: string;
+  topic?: any;
   onSelectNarrative?: (narrative: Narrative) => void;
 }
 
@@ -53,18 +56,22 @@ function ActivitySparkline({
   series,
   width = 100,
   height = 26,
+  responsive = false,
+  className = "",
 }: {
   series?: number[];
   width?: number;
   height?: number;
+  responsive?: boolean;
+  className?: string;
 }) {
   const gradientId = useId();
 
   if (!series || series.length < 2) {
     return (
       <div
-        className="flex items-center justify-center text-xs text-gray-300 font-mono tracking-widest select-none"
-        style={{ width, height }}
+        className={`flex items-center justify-center text-xs text-gray-300 font-mono tracking-widest select-none ${className}`}
+        style={{ width: responsive ? "100%" : width, height }}
         title="Activity time-series data unavailable"
       >
         —
@@ -76,10 +83,11 @@ function ActivitySparkline({
 
   return (
     <svg
-      width={width}
+      width={responsive ? "100%" : width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className="overflow-visible"
+      preserveAspectRatio={responsive ? "none" : undefined}
+      className={`overflow-visible ${className}`}
       aria-label="Narrative activity sparkline over time"
       role="img"
     >
@@ -147,6 +155,8 @@ function SentimentBadge({ sentiment }: { sentiment?: NarrativeSentiment }) {
 export function NarrativeLandscape({
   narratives = [],
   topicName = "this trend",
+  topicId,
+  topic,
   onSelectNarrative,
 }: NarrativeLandscapeProps) {
   // State for search, filter and sort
@@ -157,6 +167,36 @@ export function NarrativeLandscape({
 
   // Selected narrative for detail drawer
   const [selectedNarrative, setSelectedNarrative] = useState<Narrative | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Platform share calculation for active narrative modal
+  const platformShares = useMemo(() => {
+    if (!selectedNarrative?.platforms || selectedNarrative.platforms.length === 0) return [];
+    const total = selectedNarrative.platforms.reduce((sum, p) => sum + p.count, 0) || 1;
+    return selectedNarrative.platforms.map((p) => {
+      const norm = p.platform.toLowerCase();
+      const color = norm.includes("x") || norm.includes("twitter")
+        ? "#0f1419"
+        : norm.includes("reddit") || norm === "rd"
+        ? "#FF4500"
+        : "#24A1DE";
+      const pct = Math.round((p.count / total) * 100);
+      return {
+        ...p,
+        color,
+        pct,
+      };
+    });
+  }, [selectedNarrative]);
+
+  const topPlatform = useMemo(() => {
+    if (!platformShares || platformShares.length === 0) return null;
+    return [...platformShares].sort((a, b) => b.count - a.count)[0];
+  }, [platformShares]);
 
   // Filter menu dropdown popover state
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
@@ -177,17 +217,22 @@ export function NarrativeLandscape({
     };
   }, [isFilterMenuOpen]);
 
-  // Close drawer on escape key
+  // Close drawer on escape key with capture phase to stop propagation to presentation mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSelectedNarrative(null);
-        setIsFilterMenuOpen(false);
+        if (selectedNarrative || isFilterMenuOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          setSelectedNarrative(null);
+          setIsFilterMenuOpen(false);
+        }
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [selectedNarrative, isFilterMenuOpen]);
 
   // Filter and sort the narratives
   const filteredAndSortedNarratives = useMemo(() => {
@@ -566,7 +611,7 @@ export function NarrativeLandscape({
                         handleRowClick(narrative);
                       }
                     }}
-                    className="group flex items-center gap-2 sm:gap-3 py-2.5 px-2.5 sm:px-3.5 hover:bg-slate-50/80 cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset w-full"
+                    className="group narrative-row grid grid-cols-[24px_minmax(0,1.2fr)_auto_minmax(0,1.4fr)_auto_16px] sm:grid-cols-[28px_minmax(130px,200px)_70px_1fr_76px_16px] md:grid-cols-[28px_minmax(140px,210px)_72px_1fr_78px_16px] lg:grid-cols-[28px_minmax(150px,220px)_75px_1fr_80px_16px] items-center gap-2 sm:gap-3 md:gap-4 lg:gap-5 py-2.5 px-2.5 sm:px-3.5 hover:bg-slate-50/80 cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset w-full"
                     aria-label={`Narrative rank ${rankNumber}: ${narrative.title}. ${formattedPosts}. Sentiment: ${narrative.sentiment || "unspecified"}. Click to view details.`}
                   >
                     {/* 1. Rank Number */}
@@ -575,27 +620,33 @@ export function NarrativeLandscape({
                     </div>
 
                     {/* 2. Compact Narrative Title */}
-                    <div className="flex-1 min-w-0 pr-1">
+                    <div className="min-w-0 pr-1">
                       <span
-                        className="text-xs sm:text-[13.5px] font-semibold text-gray-900 group-hover:text-blue-600 transition-colors truncate block leading-snug"
+                        className="text-xs sm:text-[13px] font-semibold text-gray-900 group-hover:text-blue-600 transition-colors truncate block leading-snug"
                         title={narrative.title}
                       >
                         {narrative.title}
                       </span>
                     </div>
 
-                    {/* 3. Assigned-Post Count */}
-                    <div className="text-right font-medium text-gray-500 text-xs sm:text-[13px] tabular-nums shrink-0 whitespace-nowrap">
+                    {/* 3. Assigned-Post Count (Shifted further left, strictly aligned) */}
+                    <div className="text-left font-medium text-gray-500 text-xs sm:text-[13px] tabular-nums whitespace-nowrap">
                       {formattedPosts}
                     </div>
 
-                    {/* 4. Activity Sparkline */}
-                    <div className="w-16 sm:w-20 md:w-24 flex items-center justify-center shrink-0">
-                      <ActivitySparkline series={narrative.activitySeries} width={80} height={20} />
+                    {/* 4. Activity / Lifecycle Sparkline (Maximized chart width from reclaimed space) */}
+                    <div className="w-full flex items-center justify-center px-1 sm:px-2 md:px-3 min-w-0">
+                      <ActivitySparkline
+                        series={narrative.activitySeries}
+                        width={280}
+                        height={24}
+                        responsive={true}
+                        className="w-full max-w-[380px] h-6"
+                      />
                     </div>
 
-                    {/* 5. Sentiment Badge */}
-                    <div className="shrink-0">
+                    {/* 5. Sentiment Badge (Strict columnar alignment) */}
+                    <div className="flex items-center justify-center shrink-0">
                       <SentimentBadge sentiment={narrative.sentiment} />
                     </div>
 
@@ -623,40 +674,40 @@ export function NarrativeLandscape({
       </div>
 
       {/* Narrative Detail / Assigned-Post Slide-over Modal */}
-      {selectedNarrative && (
+      {mounted && selectedNarrative && createPortal(
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby="narrative-modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-gray-900/40 backdrop-blur-xs transition-opacity duration-300"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 md:p-6 bg-gray-900/40 backdrop-blur-xs transition-opacity duration-300"
           onClick={() => setSelectedNarrative(null)}
         >
           <div
-            className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
+            className="relative w-full max-w-3xl lg:max-w-4xl bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-gray-100 overflow-hidden max-h-[92vh] sm:max-h-[88vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="p-6 border-b border-gray-100 flex items-start justify-between gap-4 bg-gray-50/50">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+            {/* Modal Header (Sticky) */}
+            <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-md px-5 sm:px-7 py-4 sm:py-5 border-b border-gray-100 flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50/80 border border-blue-100/60 px-2.5 py-0.5 rounded-full">
                     Narrative Detail
                   </span>
                   <SentimentBadge sentiment={selectedNarrative.sentiment} />
                   {selectedNarrative.growth !== undefined && (
-                    <span className="text-xs font-bold text-blue-600 bg-blue-50/60 px-2 py-0.5 rounded-md">
+                    <span className="text-[11px] sm:text-xs font-bold text-blue-700 bg-blue-50/70 border border-blue-100/60 px-2.5 py-0.5 rounded-full">
                       +{selectedNarrative.growth}% growth
                     </span>
                   )}
                 </div>
                 <h3
                   id="narrative-modal-title"
-                  className="text-lg sm:text-xl font-bold text-gray-900 leading-snug"
+                  className="text-lg sm:text-2xl font-bold text-gray-900 leading-snug tracking-tight"
                 >
                   {selectedNarrative.title}
                 </h3>
                 {selectedNarrative.description && (
-                  <p className="text-sm text-gray-600 mt-1 leading-relaxed">
+                  <p className="text-xs sm:text-sm text-gray-600 mt-1.5 leading-relaxed max-w-2xl">
                     {selectedNarrative.description}
                   </p>
                 )}
@@ -664,7 +715,7 @@ export function NarrativeLandscape({
               <button
                 type="button"
                 onClick={() => setSelectedNarrative(null)}
-                className="p-1.5 text-gray-400 hover:text-gray-700 bg-white hover:bg-gray-100 border border-gray-200 rounded-full transition-colors cursor-pointer shrink-0"
+                className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 active:bg-gray-200 rounded-full transition-all cursor-pointer shrink-0"
                 aria-label="Close modal"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -675,58 +726,165 @@ export function NarrativeLandscape({
             </div>
 
             {/* Modal Body / Assigned Posts & Metrics */}
-            <div className="p-6 overflow-y-auto scroll space-y-5">
+            <div className="px-5 sm:px-7 py-5 sm:py-6 overflow-y-auto scroll space-y-6 sm:space-y-7">
               {/* Metrics Summary Strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50/70 p-4 rounded-xl border border-gray-100">
-                <div>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                    Assigned Posts
-                  </p>
-                  <p className="text-lg font-bold text-gray-900 mt-0.5">
-                    {selectedNarrative.assignedPostsCount
-                      ? fmt(selectedNarrative.assignedPostsCount)
-                      : "—"}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
+                {/* 1. Assigned Posts */}
+                <div className="group bg-gray-50/70 hover:bg-white border border-gray-100 hover:border-gray-200/90 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 transition-all duration-200 shadow-2xs hover:shadow-xs flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[10px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">
+                      Assigned Posts
+                    </p>
+                    {selectedNarrative.growth !== undefined && (
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-50/80 border border-blue-100/60 px-1.5 py-0.5 rounded shadow-2xs shrink-0 whitespace-nowrap">
+                        +{selectedNarrative.growth}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="my-1.5 flex items-baseline gap-1.5 min-h-[36px]">
+                    <span className="text-2xl sm:text-[26px] font-extrabold text-gray-900 tracking-tight leading-none">
+                      {selectedNarrative.assignedPostsCount
+                        ? fmt(selectedNarrative.assignedPostsCount)
+                        : "—"}
+                    </span>
+                    <span className="text-xs font-semibold text-gray-500">posts</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 font-medium truncate">
+                    Estimated volume
                   </p>
                 </div>
-                <div>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                    Trend Context
-                  </p>
-                  <p className="text-sm font-semibold text-gray-700 mt-1 truncate">
-                    {topicName}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                    Activity
-                  </p>
-                  <div className="mt-1">
-                    <ActivitySparkline series={selectedNarrative.activitySeries} width={100} height={26} />
+
+                {/* 2. Trend Context */}
+                <div className="group bg-gray-50/70 hover:bg-white border border-gray-100 hover:border-gray-200/90 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 transition-all duration-200 shadow-2xs hover:shadow-xs flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[10px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">
+                      Trend Context
+                    </p>
+                    {topic?.cat && (
+                      <span className="text-[10px] font-bold text-gray-700 bg-white border border-gray-200/80 px-1.5 py-0.5 rounded shadow-2xs shrink-0 whitespace-nowrap">
+                        {topic.cat}
+                      </span>
+                    )}
+                  </div>
+                  <div className="my-1.5 min-h-[36px] flex flex-col justify-center">
+                    <p className="text-sm sm:text-base font-bold text-gray-900 truncate leading-snug" title={topicName}>
+                      {topicName}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 truncate">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />
+                    <span className="truncate">Active Topic</span>
                   </div>
                 </div>
-                <div>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                    Platform Spread
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {selectedNarrative.platforms?.map((p) => (
-                      <span
-                        key={p.platform}
-                        className="text-[11px] font-bold text-gray-600 bg-white border border-gray-200 px-1.5 py-0.5 rounded"
-                      >
-                        {p.platform}: {fmt(p.count)}
+
+                {/* 3. Activity */}
+                <div className="group bg-gray-50/70 hover:bg-white border border-gray-100 hover:border-gray-200/90 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 transition-all duration-200 shadow-2xs hover:shadow-xs flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[10px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">
+                      Activity
+                    </p>
+                    <span className="text-[10px] font-bold text-gray-700 bg-white border border-gray-200/80 px-1.5 py-0.5 rounded shadow-2xs shrink-0 whitespace-nowrap">
+                      30 days
+                    </span>
+                  </div>
+                  <div className="my-1.5 min-h-[36px] w-full flex items-center">
+                    <ActivitySparkline
+                      series={selectedNarrative.activitySeries}
+                      width={120}
+                      height={26}
+                      responsive={true}
+                      className="w-full"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-1 text-[11px] text-gray-400 font-medium">
+                    <span className="truncate">30-day velocity</span>
+                    <span className="text-gray-500 font-semibold shrink-0">Active curve</span>
+                  </div>
+                </div>
+
+                {/* 4. Platform Share */}
+                <div className="group bg-gray-50/70 hover:bg-white border border-gray-100 hover:border-gray-200/90 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 transition-all duration-200 shadow-2xs hover:shadow-xs flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[10px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">
+                      Platform Share
+                    </p>
+                    {topPlatform ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-700 bg-white border border-gray-200/80 px-1.5 py-0.5 rounded shadow-2xs shrink-0 whitespace-nowrap">
+                        <PlatformIcon platform={topPlatform.platform} size="xs" shape="circle" />
+                        <span>{topPlatform.pct}% share</span>
                       </span>
-                    )) || <span className="text-xs text-gray-400">—</span>}
+                    ) : (
+                      <span className="text-[10px] font-bold text-gray-700 bg-white border border-gray-200/80 px-1.5 py-0.5 rounded shadow-2xs shrink-0 whitespace-nowrap">
+                        {platformShares.length} channels
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="my-1.5 min-h-[36px] w-full flex flex-col justify-center gap-1.5">
+                    {/* Proportional Segmented Bar */}
+                    <div className="w-full h-1.5 rounded-full overflow-hidden flex bg-gray-200/60 gap-0.5">
+                      {platformShares.map((p) => (
+                        <div
+                          key={p.platform}
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${Math.max(8, p.pct)}%`, backgroundColor: p.color }}
+                          title={`${p.platform}: ${fmt(p.count)} (${p.pct}%)`}
+                        />
+                      ))}
+                    </div>
+
+                    {/* 3 Micro-Tiles with Social Logos */}
+                    <div className="grid grid-cols-3 gap-1.5 w-full text-center">
+                      {platformShares.map((p) => (
+                        <div
+                          key={p.platform}
+                          className="bg-white/95 hover:bg-white rounded-lg py-1 px-1 border border-gray-200/70 shadow-2xs flex items-center justify-center gap-1.5 min-w-0 transition-all"
+                          title={`${p.platform}: ${fmt(p.count)} (${p.pct}%)`}
+                        >
+                          <PlatformIcon platform={p.platform} size="xs" shape="circle" />
+                          <span className="text-xs font-bold text-gray-900 leading-none">
+                            {fmt(p.count)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1 text-[11px] text-gray-400 font-medium">
+                    <span className="truncate">Cross-channel spread</span>
+                    <span className="text-gray-500 font-semibold shrink-0">
+                      {selectedNarrative.assignedPostsCount ? fmt(selectedNarrative.assignedPostsCount) : "—"} posts
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Assigned Evidence Posts */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
-                    Representative Assigned Posts
+              {/* Emotion Mix Component */}
+              <div className="pt-5 sm:pt-6 border-t border-gray-100">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <h4 className="text-xs sm:text-sm font-bold text-gray-900 uppercase tracking-wider">
+                    Emotion Mix
                   </h4>
+                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50/80 px-2 py-0.5 rounded-full border border-blue-100/60">
+                    NLP-derived
+                  </span>
+                </div>
+                <TrendEmotions narrative={selectedNarrative} topic={topic} />
+              </div>
+
+              {/* Assigned Evidence Posts */}
+              <div className="pt-5 sm:pt-6 border-t border-gray-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3.5 pb-2 border-b border-gray-100">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs sm:text-sm font-bold text-gray-900 uppercase tracking-wider">
+                      Representative Assigned Posts
+                    </h4>
+                    {selectedNarrative.posts && (
+                      <span className="text-[10px] font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                        {selectedNarrative.posts.length}
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[11px] text-gray-400 font-medium">
                     Simulated assignments · Live classifier integration pending
                   </span>
@@ -737,7 +895,7 @@ export function NarrativeLandscape({
                     {selectedNarrative.posts.map((post) => (
                       <div
                         key={post.id}
-                        className="p-4 rounded-xl border border-gray-100 bg-white hover:border-blue-100 transition-colors shadow-2xs"
+                        className="p-3.5 sm:p-4 rounded-xl border border-gray-100/90 bg-white hover:border-blue-200/80 hover:shadow-2xs transition-all duration-200"
                       >
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -753,21 +911,28 @@ export function NarrativeLandscape({
                               · {post.timestamp}
                             </span>
                           </div>
-                          {post.likes && (
-                            <span className="text-xs font-medium text-gray-500">
-                              ❤️ {post.likes}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2 text-xs font-medium text-gray-500">
+                            {post.likes && (
+                              <span className="flex items-center gap-1 bg-red-50/60 text-red-600 px-1.5 py-0.5 rounded text-[11px] font-semibold">
+                                ❤️ {post.likes}
+                              </span>
+                            )}
+                            {post.reposts && (
+                              <span className="flex items-center gap-1 bg-blue-50/60 text-blue-600 px-1.5 py-0.5 rounded text-[11px] font-semibold">
+                                🔄 {post.reposts}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-sm text-gray-700 leading-relaxed font-medium">
+                        <p className="text-xs sm:text-sm text-gray-700 leading-relaxed font-medium">
                           &ldquo;{post.text}&rdquo;
                         </p>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="p-6 text-center bg-gray-50 rounded-xl border border-gray-100">
-                    <p className="text-sm text-gray-500">
+                  <div className="p-6 text-center bg-gray-50/70 rounded-xl border border-gray-100">
+                    <p className="text-xs sm:text-sm text-gray-500">
                       No individual post samples assigned to this narrative yet.
                     </p>
                   </div>
@@ -775,18 +940,22 @@ export function NarrativeLandscape({
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
+            {/* Modal Footer (Sticky) */}
+            <div className="sticky bottom-0 z-20 px-5 sm:px-7 py-3 sm:py-3.5 border-t border-gray-100 bg-white/95 backdrop-blur-md flex items-center justify-between">
+              <span className="text-[11px] text-gray-400 hidden sm:inline-block">
+                Press <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-[10px] font-mono text-gray-600">Esc</kbd> to close
+              </span>
               <button
                 type="button"
                 onClick={() => setSelectedNarrative(null)}
-                className="px-4 py-2 bg-white hover:bg-gray-100 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 transition-colors cursor-pointer"
+                className="px-4 py-1.5 sm:py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ml-auto shadow-2xs hover:shadow-xs"
               >
                 Close
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

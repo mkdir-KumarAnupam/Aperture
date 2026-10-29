@@ -30,6 +30,7 @@ export interface Narrative {
   growth?: number;
   updatedAt?: string | number;
   posts?: NarrativePost[];
+  emo?: Record<string, number>;
 }
 
 export type Trend = {
